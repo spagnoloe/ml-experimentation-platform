@@ -1,5 +1,6 @@
 """The Experiment Config: the data scientist's validated description of what to train."""
 
+import math
 from typing import Annotated, Any, Literal
 
 from pydantic import (
@@ -47,6 +48,13 @@ class FixedTuning(_Strict):
                     f"lists or ranges ({', '.join(searched)})"
                 )
         return params
+
+    @property
+    def candidate_count(self) -> int:
+        return 1
+
+    def candidates(self, defaults: dict[str, Any], random_state: int) -> list[dict[str, Any]]:
+        return [{**defaults, **self.params}]
 
 
 class IntRange(_Strict):
@@ -103,9 +111,7 @@ class RandomTuning(_Strict):
         if not self.params:
             raise ValueError("random mode needs at least one param to search")
         if all(isinstance(values, list) for values in self.params.values()):
-            combinations = 1
-            for values in self.params.values():
-                combinations *= len(values)
+            combinations = math.prod(len(values) for values in self.params.values())
             if combinations < self.n_iter:
                 raise ValueError(
                     f"the lists give only {combinations} distinct Candidates; "
@@ -113,13 +119,17 @@ class RandomTuning(_Strict):
                 )
         return self
 
-    def sample(self, random_state: int) -> list[dict[str, Any]]:
+    @property
+    def candidate_count(self) -> int:
+        return self.n_iter
+
+    def candidates(self, defaults: dict[str, Any], random_state: int) -> list[dict[str, Any]]:
         space = {
             name: values if isinstance(values, list) else values.distribution()
             for name, values in self.params.items()
         }
         return [
-            {name: _native(value) for name, value in params.items()}
+            {**defaults, **{name: _native(value) for name, value in params.items()}}
             for params in ParameterSampler(space, self.n_iter, random_state=random_state)
         ]
 
@@ -136,6 +146,13 @@ class ExperimentConfig(_Strict):
     target_transform: Literal["none", "log1p"] = "none"
     tuning: Annotated[FixedTuning | RandomTuning, Field(discriminator="mode")] = FixedTuning()
     random_state: int = 42
+
+    @field_validator("tuning", mode="before")
+    @classmethod
+    def _fixed_by_default(cls, tuning: Any) -> Any:
+        if isinstance(tuning, dict) and "mode" not in tuning:
+            return {"mode": "fixed", **tuning}
+        return tuning
 
     @field_validator("name")
     @classmethod
@@ -158,17 +175,14 @@ class ExperimentConfig(_Strict):
 
     @property
     def candidate_count(self) -> int:
-        return 1 if isinstance(self.tuning, FixedTuning) else self.tuning.n_iter
+        return self.tuning.candidate_count
 
     def candidates(self) -> list[dict[str, Any]]:
         """The hyperparameter sets to evaluate: one for fixed mode, `n_iter` for random mode.
 
         Params the config leaves out keep the algorithm's default fixed values.
         """
-        defaults = ALGORITHMS[self.algorithm].default_params
-        if isinstance(self.tuning, FixedTuning):
-            return [{**defaults, **self.tuning.params}]
-        return [{**defaults, **params} for params in self.tuning.sample(self.random_state)]
+        return self.tuning.candidates(ALGORITHMS[self.algorithm].default_params, self.random_state)
 
 
 def parse_config(raw: dict[str, Any] | ExperimentConfig) -> ExperimentConfig:

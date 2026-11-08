@@ -78,19 +78,20 @@ def _train_and_log(jobs: JobRepository, job_id: uuid.UUID, dataset: Dataset | No
         mlflow.set_tag("dataset_sha256", dataset.sha256)
         split = split_dataset(dataset)
 
-        results, candidate_run_ids = [], {}
+        results, candidate_run_ids = [], []
         for index, params in enumerate(candidates):
-            name = f"{config.name}-candidate-{index}"
-            with mlflow.start_run(run_name=name, nested=True) as candidate_run:
+            candidate_run_name = f"{config.name}-candidate-{index}"
+            with mlflow.start_run(run_name=candidate_run_name, nested=True) as candidate_run:
                 result = evaluate_candidate(config, params, split)
                 mlflow.log_params(params)
                 mlflow.log_metrics(result.cv_metrics())
             results.append(result)
-            candidate_run_ids[id(result)] = candidate_run.info.run_id
+            candidate_run_ids.append(candidate_run.info.run_id)
             jobs.record_progress(job_id, progress_done=index + 1)
 
         winner = best_candidate(results)
-        mlflow.set_tag("winning_candidate_run_id", candidate_run_ids[id(winner)])
+        winner_index = next(i for i, result in enumerate(results) if result is winner)
+        mlflow.set_tag("winning_candidate_run_id", candidate_run_ids[winner_index])
         mlflow.log_params(winner.params)
         mlflow.log_metrics(winner.cv_metrics())
 

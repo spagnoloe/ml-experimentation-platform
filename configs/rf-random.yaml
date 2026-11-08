@@ -1,5 +1,5 @@
 # A random search over the default random forest search space. Submit with
-# `make train CONFIG=configs/rf-random.yaml`. About 30 s of training on a 10-core laptop.
+# `make train CONFIG=configs/rf-random.yaml`. About 35 s end to end on a 10-core laptop.
 name: rf-random
 algorithm: random_forest
 features:

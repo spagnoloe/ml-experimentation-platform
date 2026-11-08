@@ -134,3 +134,11 @@ def test_the_random_forest_default_search_space_is_capped_for_runtime():
 
     assert space["max_depth"]["high"] <= 20
     assert space["n_estimators"]["high"] <= 200
+
+
+def test_tuning_without_a_mode_is_fixed(jobs):
+    config = {**FIXED_CONFIG, "tuning": {"params": {"max_depth": 5}}}
+
+    job = service.submit(jobs, config)
+
+    assert jobs.get(job.id).config["tuning"] == {"mode": "fixed", "params": {"max_depth": 5}}
