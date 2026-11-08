@@ -1,0 +1,16 @@
+# A random search over the default random forest search space. Submit with
+# `make train CONFIG=configs/rf-random.yaml`. About 30 s of training on a 10-core laptop.
+name: rf-random
+algorithm: random_forest
+features:
+  bedrooms_per_room: true
+target_transform: log1p
+tuning:
+  mode: random                    # fixed | random
+  n_iter: 10                      # random only, 1..50: the number of Candidates
+  params:                         # lists are sampled uniformly; ranges are {type, low, high, log}
+    n_estimators: {type: int, low: 50, high: 200}
+    max_depth: {type: int, low: 6, high: 20}
+    min_samples_leaf: {type: int, low: 2, high: 8}
+    max_features: [1.0, 0.5, sqrt]
+random_state: 42                  # also seeds the sampling of Candidates

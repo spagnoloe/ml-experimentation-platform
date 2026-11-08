@@ -1,0 +1,16 @@
+# A random search over the default gradient boosting search space. Submit with
+# `make train CONFIG=configs/gb-random.yaml`. About 17 s of training on a 10-core laptop.
+name: gb-random
+algorithm: gradient_boosting
+features:
+  bedrooms_per_room: true
+target_transform: log1p
+tuning:
+  mode: random                    # fixed | random
+  n_iter: 10                      # random only, 1..50: the number of Candidates
+  params:                         # lists are sampled uniformly; ranges are {type, low, high, log}
+    n_estimators: {type: int, low: 50, high: 200}
+    learning_rate: {type: float, low: 0.03, high: 0.3, log: true}
+    max_depth: [2, 3, 4]
+    subsample: {type: float, low: 0.6, high: 1.0}
+random_state: 42                  # also seeds the sampling of Candidates

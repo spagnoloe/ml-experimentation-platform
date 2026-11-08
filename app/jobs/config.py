@@ -1,6 +1,6 @@
 """The Experiment Config: the data scientist's validated description of what to train."""
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
@@ -10,6 +10,8 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+from scipy.stats import loguniform, randint, uniform
+from sklearn.model_selection import ParameterSampler
 
 from app.ml.algorithms import ALGORITHMS
 
@@ -34,13 +36,105 @@ class FixedTuning(_Strict):
     # Estimator-level names, e.g. `n_estimators`; the pipeline adds no prefixes to learn.
     params: dict[str, ParamValue] = Field(default_factory=dict)
 
+    @field_validator("params", mode="before")
+    @classmethod
+    def _single_values(cls, params: Any) -> Any:
+        if isinstance(params, dict):
+            searched = sorted(k for k, v in params.items() if isinstance(v, list | dict))
+            if searched:
+                raise ValueError(
+                    "fixed mode takes single values; use mode: random to search "
+                    f"lists or ranges ({', '.join(searched)})"
+                )
+        return params
+
+
+class IntRange(_Strict):
+    """Integers from `low` to `high` inclusive, sampled uniformly."""
+
+    type: Literal["int"]
+    low: int
+    high: int
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "IntRange":
+        if self.high < self.low:
+            raise ValueError("high must be at least low")
+        return self
+
+    def distribution(self) -> Any:
+        return randint(self.low, self.high + 1)
+
+
+class FloatRange(_Strict):
+    """Floats between `low` and `high`, sampled uniformly or, with `log`, log-uniformly."""
+
+    type: Literal["float"]
+    low: float
+    high: float
+    log: bool = False
+
+    @model_validator(mode="after")
+    def _ordered(self) -> "FloatRange":
+        if self.high <= self.low:
+            raise ValueError("high must be greater than low")
+        if self.log and self.low <= 0:
+            raise ValueError("a log range needs low > 0")
+        return self
+
+    def distribution(self) -> Any:
+        if self.log:
+            return loguniform(self.low, self.high)
+        return uniform(self.low, self.high - self.low)
+
+
+Range = Annotated[IntRange | FloatRange, Field(discriminator="type")]
+SearchValues = Annotated[list[ParamValue], Field(min_length=1)] | Range
+
+
+class RandomTuning(_Strict):
+    mode: Literal["random"]
+    n_iter: int = Field(default=10, ge=1, le=50)
+    # Lists are sampled uniformly; ranges map to scipy randint, uniform or loguniform.
+    params: dict[str, SearchValues]
+
+    @model_validator(mode="after")
+    def _enough_combinations(self) -> "RandomTuning":
+        if not self.params:
+            raise ValueError("random mode needs at least one param to search")
+        if all(isinstance(values, list) for values in self.params.values()):
+            combinations = 1
+            for values in self.params.values():
+                combinations *= len(values)
+            if combinations < self.n_iter:
+                raise ValueError(
+                    f"the lists give only {combinations} distinct Candidates; "
+                    f"set n_iter to at most {combinations} or use a range"
+                )
+        return self
+
+    def sample(self, random_state: int) -> list[dict[str, Any]]:
+        space = {
+            name: values if isinstance(values, list) else values.distribution()
+            for name, values in self.params.items()
+        }
+        return [
+            {name: _native(value) for name, value in params.items()}
+            for params in ParameterSampler(space, self.n_iter, random_state=random_state)
+        ]
+
+
+def _native(value: Any) -> Any:
+    """numpy scalars from scipy become plain Python values, for JSON and MLflow params."""
+    return value.item() if hasattr(value, "item") else value
+
 
 class ExperimentConfig(_Strict):
     name: str = Field(min_length=1, max_length=200)
     algorithm: AlgorithmName
     features: Features = Features()
     target_transform: Literal["none", "log1p"] = "none"
-    tuning: FixedTuning = FixedTuning()
+    tuning: Annotated[FixedTuning | RandomTuning, Field(discriminator="mode")] = FixedTuning()
     random_state: int = 42
 
     @field_validator("name")
@@ -62,9 +156,19 @@ class ExperimentConfig(_Strict):
             )
         return self
 
+    @property
+    def candidate_count(self) -> int:
+        return 1 if isinstance(self.tuning, FixedTuning) else self.tuning.n_iter
+
     def candidates(self) -> list[dict[str, Any]]:
-        """The hyperparameter sets to evaluate: a fixed config has exactly one Candidate."""
-        return [{**ALGORITHMS[self.algorithm].default_params, **self.tuning.params}]
+        """The hyperparameter sets to evaluate: one for fixed mode, `n_iter` for random mode.
+
+        Params the config leaves out keep the algorithm's default fixed values.
+        """
+        defaults = ALGORITHMS[self.algorithm].default_params
+        if isinstance(self.tuning, FixedTuning):
+            return [{**defaults, **self.tuning.params}]
+        return [{**defaults, **params} for params in self.tuning.sample(self.random_state)]
 
 
 def parse_config(raw: dict[str, Any] | ExperimentConfig) -> ExperimentConfig:

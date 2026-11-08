@@ -14,7 +14,7 @@ from mlflow.models import ModelSignature
 from mlflow.types import ColSpec, Schema
 
 from app.db.repositories import JobRepository
-from app.jobs.config import ExperimentConfig
+from app.jobs.config import ExperimentConfig, RandomTuning
 from app.ml.data import Dataset, load_dataset, split_dataset
 from app.ml.pipeline import SKOPS_TRUSTED_TYPES
 from app.ml.schema import FEATURES, SAMPLE_ROWS, TARGET
@@ -71,21 +71,26 @@ def _train_and_log(jobs: JobRepository, job_id: uuid.UUID, dataset: Dataset | No
                 "cv_seed": settings.cv_seed,
             }
         )
+        if isinstance(config.tuning, RandomTuning):
+            mlflow.log_param("n_iter", config.tuning.n_iter)
 
         dataset = dataset or load_dataset(settings.data_path)
         mlflow.set_tag("dataset_sha256", dataset.sha256)
         split = split_dataset(dataset)
 
-        results = []
+        results, candidate_run_ids = [], {}
         for index, params in enumerate(candidates):
-            with mlflow.start_run(run_name=f"{config.name}-candidate-{index}", nested=True):
+            name = f"{config.name}-candidate-{index}"
+            with mlflow.start_run(run_name=name, nested=True) as candidate_run:
                 result = evaluate_candidate(config, params, split)
                 mlflow.log_params(params)
                 mlflow.log_metrics(result.cv_metrics())
             results.append(result)
+            candidate_run_ids[id(result)] = candidate_run.info.run_id
             jobs.record_progress(job_id, progress_done=index + 1)
 
         winner = best_candidate(results)
+        mlflow.set_tag("winning_candidate_run_id", candidate_run_ids[id(winner)])
         mlflow.log_params(winner.params)
         mlflow.log_metrics(winner.cv_metrics())
 
