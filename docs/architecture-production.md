@@ -114,17 +114,12 @@ sequenceDiagram
   CP->>R: Poll GET /v1/model on every replica
   R-->>CP: loaded v7, desired v7, in_sync true
   R->>CW: Prediction metrics labelled with model_version
-  CW-->>CP: Alarm - v7 error rate or prediction drift over threshold
+  CW-->>CP: Health alarm - v7 error rate or latency over threshold
   Note over CP: Rollback is a new Deployment of the previous Model Version, never an edit
-  alt Rollback needs approval
-    CP->>AP: Rollback request to v6
-    AP-->>CP: Approve
-  else Alarm policy allows automatic rollback
-    CP->>CP: Rollback approved by policy
-  end
+  CP->>CP: Automatic rollback by policy - first rollback of this rollout, target v6 served just before v7
   CP->>MLF: Load v6
   CP->>CP: load_and_validate, no gate for a Model Version that already served
-  CP->>DB: Append Deployment v6, reason rollback of v7
+  CP->>DB: Append Deployment v6, reason rollback of v7, approved_by policy and alarm name
   CP->>EB: Publish deployment.created
   EB->>R: Reconcile now
   R->>DB: latest Deployment is v6
@@ -133,6 +128,12 @@ sequenceDiagram
   R-->>CP: in_sync true on every replica
   CP->>CP: Audit record: rollout and rollback complete
 ```
+
+Which alarms roll back without a person:
+
+- **Health alarms roll back automatically.** An alarm on error rate or latency for the new Model Version, or replicas still at `in_sync: false` when the rollout times out, points at the new Model Version, and the previous one already served in this environment. Rolling back is the fix, and waiting for an approver only prolongs bad responses. The rollback is an ordinary Deployment, so it is audited like any other. `approved_by` records the policy and the alarm instead of a person.
+- **Drift alarms go to a person.** Drift in the incoming features or predictions usually comes from the data, not the new Model Version. The geographic shift in ADR-0004 would hurt the previous Model Version just as much. The control plane opens a request, and a person decides whether to retrain or roll back.
+- **One automatic rollback per rollout.** The control plane rolls back automatically only once per rollout, and only to the Model Version that served immediately before. If that version also alarms, a person takes over, so two bad versions cannot keep replacing each other.
 
 How this behaves on failure:
 
@@ -152,13 +153,13 @@ Every component of the proof of concept has a named counterpart.
 | Artifacts | `mlflowartifacts` volume behind MLflow's artifact proxy (`--serve-artifacts`) | S3 with versioning and KMS encryption, and the artifact's sha256 checked at load. On MLflow on ECS this is one server flag, `--artifacts-destination=s3://…` (ADR-0002). SageMaker managed MLflow stores artifacts in an S3 bucket you configure. |
 | Training | One `worker` polling `training_jobs` (ADR-0003) | SQS plus SageMaker Training Jobs or EKS Jobs, with resource limits, autoscaling and concurrent jobs. A dead-letter queue and a job timeout replace the restart-time orphan sweep. |
 | Serving | One uvicorn process (`api`), reconcile at startup only | EKS or ECS replicas behind an ALB. Each replica reconciles on EventBridge deploy events, plus a periodic check, plus at startup. Liveness uses `/health`, which answers even while degraded, so a fresh environment with no Deployment still starts. The control plane uses `/v1/model` `in_sync` to confirm a rollout. |
-| Deploy control | `POST /deploy` and `GET /deployments` on the serving API | A separate control-plane service with IAM authorization, approval for prod, audit, and rollback as a new Deployment. It is the only writer of `deployments`. |
+| Deploy control | `POST /deploy` and `GET /deployments` on the serving API | A separate control-plane service with IAM authorization, approval for prod deploys, audit, and rollback as a new Deployment, automatic on health alarms. It is the only writer of `deployments`. |
 | Auth | None | IAM Identity Center SSO for the UI. API Gateway with API keys and usage plans, or Cognito OAuth, for consumers. Admin routes are internal only and are not mounted on replicas. Workloads use IAM roles (IRSA or ECS task roles), not static keys. |
 | UI | Streamlit `ui` container, or `make ui` on the host | Streamlit on ECS behind an internal ALB with SSO. It calls the control plane instead of `/deploy`. |
 | CLI and `make seed` | `app.cli submit` and `app.cli seed` against Compose | The same CLI against the dev account through SSO credentials. `seed` populates dev and ephemeral environments only. Prod gets Model Versions only through the gated CI path. |
 | Input validation | Types only, 1 to 1,000 rows | The same request model, plus plausible-range checks and schema drift checks on incoming features. |
 | Observability | JSON `predict` log line on stdout (model, version, rows, latency), read with `make logs` | CloudWatch structured logs and metrics (latency, errors, prediction distribution per `model_version`), OpenTelemetry tracing to X-Ray, and sampled prediction logs (features, prediction, version) to S3 for drift analysis, including geographic drift (ADR-0004). |
-| Drift monitoring | None. The geographic shift is documented in ADR-0004. | A scheduled job compares the logged feature distributions, especially `Latitude` and `Longitude`, and the prediction distribution against the training portion of the Run's Dataset. When drift passes a threshold, it raises a CloudWatch alarm that can trigger a Deployment of the previous Model Version or a retraining request. |
+| Drift monitoring | None. The geographic shift is documented in ADR-0004. | A scheduled job compares the logged feature distributions, especially `Latitude` and `Longitude`, and the prediction distribution against the training portion of the Run's Dataset. When drift passes a threshold, it raises a CloudWatch alarm that opens a request for a person to choose between retraining and a Deployment of the previous Model Version. Drift does not roll back automatically. |
 | Environments | `local` only (`ENVIRONMENT=local`) | A separate AWS account per environment (dev, staging, prod), each with its own RDS, MLflow and Deployments. A Model Version reaches the next environment by being deployed there, from the same artifact, after the gate passes in the previous environment. |
 | CI/CD | `make lint test` by hand, image built by Compose | GitHub Actions runs `make lint test` on every PR and pushes one image to ECR per commit (`GIT_SHA` is already recorded on every Run). It has a beat-the-Active-Model gate: a new Model Version is deployed only if its `cv_rmse_mean` is below the Active Model's on the same `dataset_sha256`. Deploying a Model Version that has already served, as in a rollback, skips the gate. |
 | Data | `data/training_data.csv` in the repo, identified by its sha256 | Each Dataset is a versioned object in S3, with validation at ingest. `dataset_sha256` stays the identity that the Leaderboard and the gate compare on. |
