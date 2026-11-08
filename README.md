@@ -124,8 +124,7 @@ The assignment has a 4-hour budget, so these were scoped out up front. Most are 
 - **Plausible-range input validation and drift detection.**
 - **More than one environment.** Every Deployment is in `local`.
 - **Concurrent Training Jobs.** One worker runs one job at a time.
-- **A user-extensible algorithm list,** dataset versioning beyond a content hash, and spatial or grouped CV.
-- **Automated UI tests,** and running seed automatically on `make up`.
+- **Automated UI tests**
 
 ## Repository layout
 
