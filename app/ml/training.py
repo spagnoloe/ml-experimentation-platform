@@ -5,7 +5,7 @@ from typing import Any
 
 import numpy as np
 from sklearn.base import RegressorMixin
-from sklearn.metrics import mean_absolute_error, r2_score, root_mean_squared_error
+from sklearn.metrics import get_scorer
 from sklearn.model_selection import cross_validate
 
 from app.jobs.config import ExperimentConfig
@@ -15,6 +15,11 @@ from app.ml.pipeline import build_pipeline
 # Predictions come out in original units for every pipeline, so these scores are too.
 _SCORING = {"rmse": "neg_root_mean_squared_error", "mae": "neg_mean_absolute_error", "r2": "r2"}
 _NEGATED = {"rmse", "mae"}
+
+
+def _sign(metric: str) -> float:
+    """scikit-learn negates error scores so higher is better; undo it to report them as errors."""
+    return -1.0 if metric in _NEGATED else 1.0
 
 
 @dataclass(frozen=True)
@@ -48,9 +53,7 @@ def evaluate_candidate(
         n_jobs=-1,
         error_score="raise",
     )
-    fold_scores = {
-        name: (-1 if name in _NEGATED else 1) * scores[f"test_{name}"] for name in _SCORING
-    }
+    fold_scores = {name: _sign(name) * scores[f"test_{name}"] for name in _SCORING}
     return CandidateResult(params=params, fold_scores=fold_scores)
 
 
@@ -63,9 +66,7 @@ def refit_and_score(
 ) -> tuple[RegressorMixin, dict[str, float]]:
     """Fit on the whole training portion, then score the Test Set once."""
     pipeline = build_pipeline(config, params).fit(split.X_train, split.y_train)
-    predictions = pipeline.predict(split.X_test)
     return pipeline, {
-        "test_rmse": float(root_mean_squared_error(split.y_test, predictions)),
-        "test_mae": float(mean_absolute_error(split.y_test, predictions)),
-        "test_r2": float(r2_score(split.y_test, predictions)),
+        f"test_{name}": _sign(name) * get_scorer(scorer)(pipeline, split.X_test, split.y_test)
+        for name, scorer in _SCORING.items()
     }

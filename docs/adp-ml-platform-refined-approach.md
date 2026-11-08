@@ -299,7 +299,7 @@ adp-experimentation-platform/
 | Service | Command | Port | Volumes |
 | --- | --- | --- | --- |
 | `postgres` | `postgres:16` with the init script | 5432 | `pgdata` |
-| `mlflow` | `mlflow server` with the Postgres backend store, `--artifacts-destination`, `--serve-artifacts` | 5000 | `mlflowartifacts` |
+| `mlflow` | `mlflow server` with the Postgres backend store, `--artifacts-destination`, `--serve-artifacts` | 5000 (host 5001: macOS AirPlay holds 5000) | `mlflowartifacts` |
 | `api` | `uvicorn app.api.main:app --workers 1` | 8000 | – |
 | `worker` | `python -m app.jobs.worker` | – | – |
 | `ui` | `streamlit run app/ui/app.py` | 8501 | – |

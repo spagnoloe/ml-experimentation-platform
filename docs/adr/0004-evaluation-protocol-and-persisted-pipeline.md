@@ -5,8 +5,8 @@ Every Training Job uses the same protocol, so any two Runs are directly comparab
 - **Fixed Test Set.** An 80/20 split of the Dataset with `random_state=42`, set in settings and not in the Experiment Config. The Test Set is 3,303 rows.
 - **Selection by CV only.** Each Candidate is scored with `KFold(5, shuffle=True, random_state=42)` on the training portion. The winner is the Candidate with the lowest mean CV RMSE. The Best Run is chosen the same way across Runs.
 - **Test Set scored once.** The winner is refitted on the whole training portion and scored once on the Test Set. Test metrics are reported but never used to choose (notebook issue 8).
-- **Original units.** RMSE, MAE and R² are computed on predictions in MedHouseVal units (100k USD), including for log1p-target models (notebook issue 3).
-- **The whole pipeline is the model.** The optional `BedroomsPerRoom` step, the `StandardScaler` (linear regression only) and the estimator form one scikit-learn `Pipeline`, wrapped in `TransformedTargetRegressor(log1p, expm1)` when the target is transformed. It is fitted only on the rows it is trained on, and logged as one MLflow model whose signature comes from the shared schema module. Consumers send raw features and get predictions in original units, with nothing to re-implement at serving time (notebook issues 1, 2 and 4).
+- **Original units.** RMSE, MAE and R² are computed on predictions in MedHouseVal units (100k USD), including for Runs with a log1p target (notebook issue 3).
+- **The whole pipeline is persisted.** The optional `BedroomsPerRoom` step, the `StandardScaler` (linear regression only) and the estimator form one scikit-learn `Pipeline`, wrapped in `TransformedTargetRegressor(log1p, expm1)` when the target is transformed. It is fitted only on the rows it is trained on, and logged as one MLflow model whose signature comes from the shared schema module. Consumers send raw features and get predictions in original units, with nothing to re-implement at serving time (notebook issues 1, 2 and 4).
 
 ## Known limitation: geographic shift
 

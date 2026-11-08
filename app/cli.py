@@ -37,7 +37,7 @@ def _submit(args: argparse.Namespace) -> int:
     except ConfigError as exc:
         print(f"{args.config}: {exc}", file=sys.stderr)
         return 2
-    print(f"queued {_describe(job)}")
+    print(f"queued {_describe(job)}; {job.progress_total} Candidate(s) to evaluate")
     if not args.wait:
         return 0
 

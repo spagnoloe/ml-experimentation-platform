@@ -78,7 +78,7 @@ def test_a_fixed_job_completes_with_a_run_holding_one_candidate_metrics_and_a_mo
     assert children[0].data.metrics["cv_rmse_mean"] == run.data.metrics["cv_rmse_mean"]
 
 
-def test_with_log1p_the_logged_model_and_every_metric_are_in_original_units(
+def test_with_log1p_the_runs_fitted_pipeline_and_every_metric_are_in_original_units(
     jobs, mlflow_store, dataset
 ):
     job = service.submit(jobs, RF_LOG1P)
