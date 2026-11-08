@@ -17,6 +17,7 @@ The CSV is the first 16,512 rows of scikit-learn's California Housing dataset in
 - **Spatial or grouped CV by region**: closer to the shift above, but no region labels exist, and choosing a grouping is a modelling decision beyond this proof of concept.
 - **Per-config split seeds**: flexible, but Runs with different seeds are not comparable on one Leaderboard.
 - **Persist only the estimator and repeat feature steps in the API**: smaller artifacts, but training and serving code can drift apart, which is the class of bug the notebook had.
+- **Grid search as a third tuning mode, next to fixed and random**: it is exhaustive, but a grid can only try a few hand-picked points of a continuous or log-scaled range, and its size is the product of the list lengths. The default gradient boosting space as a modest grid (5 × 5 × 3 × 4) is 300 Candidates, or 1,500 fits, for a single laptop worker that runs one job at a time. Random search takes those ranges directly, and `n_iter` (1 to 50) sets the cost, which the UI shows before launch. When only a few hyperparameters matter, random search also tries more distinct values of each one for the same budget (Bergstra & Bengio, 2012). If an exhaustive sweep is needed later, a `grid` mode that takes lists only, with Candidates as the product and the same cap of 50, fits the existing Candidate loop.
 
 ## Consequences
 

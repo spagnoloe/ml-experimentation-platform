@@ -117,7 +117,7 @@ The assignment has a 4-hour budget, so these were scoped out up front. Most are 
 
 - **Rollback as a feature.** There is no rollback button or event type; switching to an older Model Version is an ordinary Deployment. Rollback with approval belongs to the production control plane.
 - **MLflow registry aliases** (see [ADR-0001](docs/adr/0001-deployments-pin-versions-not-aliases.md)).
-- **Grid search.** Random search only, 1 to 50 Candidates.
+- **Grid search.** Random search only, 1 to 50 Candidates. A grid can't cover continuous or log-scaled ranges, and its size grows as the product of the list lengths: the default gradient boosting space as a modest grid would be 300 Candidates. With random search, `n_iter` sets the cost directly ([ADR-0004](docs/adr/0004-evaluation-protocol-and-persisted-pipeline.md)).
 - **A `/reload` endpoint** and periodic or event-driven reconcile.
 - **Deploy guardrails.** No warning when deploying a Model Version that is worse than the Active Model or was trained on a different Dataset.
 - **Authentication and authorization** on the UI, the API and the admin routes.
