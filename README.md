@@ -34,11 +34,25 @@ Other commands: `make train CONFIG=configs/rf-random.yaml` submits an Experiment
 
 Each step maps to a requirement of the assignment. It assumes `make up && make seed` has run.
 
+The screenshots follow one pass through it on a freshly seeded stack. A gradient boosting random search becomes the new Best Run. It is registered as Model Version 5 and deployed, and then the Active Model is switched back to the seeded Model Version 2.
+
 1. **Launch.** On the **Experiments** page, under *Launch a Training Job*, pick an algorithm (linear regression, random forest, gradient boosting, or dummy, the mean predictor behind the **Baseline**), toggle the bedrooms-per-room feature, choose the target transform, and choose **Fixed** hyperparameters or **Random search**. The caption shows how many Candidates and fits the job will run. Click **Launch** and watch the *Training Jobs* table: status, phase and a progress bar refresh every 2 seconds.
    *Runtime of a default search* (10 Candidates × 5-fold CV, then one refit and the Test Set score), measured end to end on a 10-core laptop: **about 31 s for random forest** and **about 20 s for gradient boosting**. The same searches are in `configs/rf-random.yaml` and `configs/gb-random.yaml` for the CLI.
+
+   ![The Experiments page: a gradient boosting random search with 10 Candidates has been launched, and the Training Jobs table shows it running at 7 of 10 Candidates, below the four completed seed jobs.](docs/images/demo-1-launch.png)
+
 2. **Compare.** When the job finishes, its Run appears on the **Leaderboard**, ranked by mean CV RMSE, with the **Best Run** starred and highlighted and the dummy **Baseline** shown as the bar every model must beat. Test-Set metrics are shown for information only. Select a row to see the Run's metrics, params and tags, or open it in the MLflow UI.
+
+   ![The Leaderboard: the new gradient boosting random search is the highlighted Best Run, with a mean CV RMSE of 0.4677 against 1.1319 for the dummy Baseline. Test-Set metrics are shown alongside.](docs/images/demo-2-compare.png)
+
 3. **Register.** With a Run selected, click **Register** to create a new **Model Version** of `california-housing`. Registering changes nothing that is served. The **Registry** page lists every Model Version with its metrics and Run.
+
+   ![The Run detail for the Best Run, with its metrics, params and tags, and the confirmation "Registered as Model Version california-housing/5".](docs/images/demo-3-register.png)
+
 4. **Deploy.** On the **Deployments** page, enter the Model Version number and click **Deploy**. The API loads it, checks its signature against the schema and that it returns finite predictions on sample rows, records an append-only **Deployment**, and only then swaps it in as the **Active Model**. A Model Version that fails validation is refused and the Active Model stays as it was.
+
+   ![The Deployments page after deploying version 5: the Active Model is california-housing/5, in sync with the latest Deployment.](docs/images/demo-4-deploy.png)
+
 5. **Predict.** Use the *Test prediction* form on the same page, or call the API directly. Every response names the Model Version that produced it:
 
    ```sh
@@ -50,7 +64,12 @@ Each step maps to a requirement of the assignment. It assumes `make up && make s
    ```
 
    `/v1/predict` takes 1 to 1,000 rows and rejects missing, extra or non-numeric fields with `422`. `GET /v1/model` shows the loaded Model Version and whether it matches the latest Deployment (`in_sync`).
+
+   ![The Test prediction form: a predicted house value of 4.314 (100k USD), answered by Model Version california-housing/5.](docs/images/demo-5-predict.png)
+
 6. **Switch Model Version.** Deploy any other Model Version, newer or older, the same way (or `curl -X POST localhost:8000/deploy -H 'content-type: application/json' -d '{"model_name": "california-housing", "version": 4}'`). The next prediction names the new version, and *Deployment history* shows both Deployments, newest first. Switching back is just another Deployment.
+
+   ![After switching back: the Active Model is california-housing/2, and the Deployment history lists versions 2, 5 and 2, newest first.](docs/images/demo-6-switch.png)
 
 `make up && make seed` on a clean clone is the end-to-end smoke check; the UI and `make seed` have no automated tests.
 
