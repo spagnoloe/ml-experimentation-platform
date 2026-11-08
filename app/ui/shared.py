@@ -11,10 +11,10 @@ from app.registry.client import MlflowRegistryClient
 from app.settings import get_settings
 
 ALGORITHM_LABELS = {
-    "dummy": "Dummy (mean baseline)",
     "linear_regression": "Linear regression",
     "random_forest": "Random forest",
     "gradient_boosting": "Gradient boosting",
+    "dummy": "Dummy (mean baseline)",
 }
 
 

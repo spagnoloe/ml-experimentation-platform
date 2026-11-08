@@ -16,7 +16,7 @@ from sklearn.model_selection import ParameterSampler
 
 from app.ml.algorithms import ALGORITHMS
 
-AlgorithmName = Literal["dummy", "linear_regression", "random_forest", "gradient_boosting"]
+AlgorithmName = Literal["linear_regression", "random_forest", "gradient_boosting", "dummy"]
 ParamValue = bool | int | float | str | None
 
 
@@ -163,7 +163,7 @@ class ExperimentConfig(_Strict):
 
     @model_validator(mode="after")
     def _params_belong_to_the_algorithm(self) -> "ExperimentConfig":
-        if not ALGORITHMS[self.algorithm].takes_params and (
+        if ALGORITHMS[self.algorithm].is_baseline and (
             self.tuning.mode == "random" or self.tuning.params
         ):
             raise ValueError(

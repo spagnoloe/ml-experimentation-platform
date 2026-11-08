@@ -1,4 +1,5 @@
-# Seed config: submitted by `make seed`. The mean-predictor baseline every model should beat.
+# Seed config: submitted by `make seed`, one per algorithm. Fixed hyperparameters keep seed fast.
+# The dummy has none: it is the Baseline every model should beat.
 name: seed-dummy
 algorithm: dummy
 features:

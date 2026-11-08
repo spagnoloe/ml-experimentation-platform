@@ -34,6 +34,10 @@ _Avoid_: Parent run, experiment, model
 The completed Run with the lowest mean cross-validation RMSE on the current Dataset.
 _Avoid_: Champion, winner
 
+**Baseline**:
+The top-ranked Run of the `dummy` algorithm, a mean predictor with no hyperparameters, shown on the Leaderboard as the reference every model should beat.
+_Avoid_: Benchmark, dummy model
+
 **Leaderboard**:
 All completed Runs on the current Dataset, ranked by mean cross-validation RMSE.
 

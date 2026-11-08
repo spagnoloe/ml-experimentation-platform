@@ -163,7 +163,7 @@ def test_the_best_run_is_the_completed_run_with_the_lowest_mean_cv_rmse(dataset_
     assert best_run(MlflowClient(), dataset_sha256).run_id == best
 
 
-def test_the_baseline_is_the_best_dummy_run_and_absent_without_one(dataset_sha256):
+def test_the_baseline_is_the_top_ranked_dummy_run_and_absent_without_one(dataset_sha256):
     _log_run(dataset_sha256, name="forest", cv_rmse=0.5)
     assert baseline(leaderboard(MlflowClient(), dataset_sha256)) is None
 

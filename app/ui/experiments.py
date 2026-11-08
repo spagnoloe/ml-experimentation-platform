@@ -189,9 +189,16 @@ def _fmt(value: float | None) -> str:
     return "" if value is None else f"{value:.4f}"
 
 
+_BEST_MARKER = "★ Best Run"
+
+
+def _cv_rmse(row: LeaderboardRow) -> str:
+    return f"{row.cv_rmse_mean:.4f} ± {row.cv_rmse_std:.4f}"
+
+
 def _marker(row: LeaderboardRow, baseline_row: LeaderboardRow | None) -> str:
     if row.is_best:
-        return "★ Best Run"
+        return _BEST_MARKER
     return "Baseline" if row is baseline_row else ""
 
 
@@ -203,7 +210,7 @@ def _leaderboard_frame(rows: list[LeaderboardRow], mlflow_ui_url: str) -> pd.Dat
                 "Best": _marker(row, baseline_row),
                 "Config": row.config_name,
                 "Algorithm": shared.algorithm_label(row.algorithm),
-                "CV RMSE": f"{row.cv_rmse_mean:.4f} ± {row.cv_rmse_std:.4f}",
+                "CV RMSE": _cv_rmse(row),
                 "CV MAE": _fmt(row.cv_mae_mean),
                 "CV R²": _fmt(row.cv_r2_mean),
                 "Test RMSE": _fmt(row.test_rmse),
@@ -218,7 +225,7 @@ def _leaderboard_frame(rows: list[LeaderboardRow], mlflow_ui_url: str) -> pd.Dat
 
 
 def _highlight_best(row: pd.Series) -> list[str]:
-    best = row["Best"].startswith("★")
+    best = row["Best"] == _BEST_MARKER
     style = "background-color: rgba(255, 196, 0, 0.25); font-weight: 600" if best else ""
     return [style] * len(row)
 
@@ -242,11 +249,12 @@ def _leaderboard_section() -> None:
         return
     if baseline_row := baseline(rows):
         st.markdown(
-            f"**Baseline** (mean predictor, `{baseline_row.config_name}`): CV RMSE "
-            f"{baseline_row.cv_rmse_mean:.4f} ± {baseline_row.cv_rmse_std:.4f}"
+            f"**Baseline** (`{baseline_row.config_name}`): CV RMSE {_cv_rmse(baseline_row)}"
         )
     else:
-        st.caption("No baseline yet: launch a Dummy Run to compare every model with a mean.")
+        st.caption(
+            "No Baseline yet: launch a dummy Run to compare every model with a mean predictor."
+        )
 
     frame = _leaderboard_frame(rows, settings.mlflow_ui_url)
     # Selections are row positions, so a new key whenever the Runs change clears the
