@@ -22,7 +22,7 @@ from app.ml.schema import SAMPLE_ROWS
 from app.registry.client import MlflowRegistryClient, RegistryError
 from app.registry.model_version import ModelVersionRef
 from app.settings import Settings, get_settings
-from app.tracking.runs import leaderboard
+from app.tracking.runs import best_run
 
 SEED_CONFIGS = Path(__file__).resolve().parent.parent / "configs" / "seed"
 # Per job; seed jobs take seconds, so hitting this means the worker is not picking them up.
@@ -125,10 +125,9 @@ def _best_run_version(
     """
     client = MlflowClient(settings.mlflow_tracking_uri)
     dataset_sha256 = client.get_run(seeded_run_id).data.tags["dataset_sha256"]
-    rows = leaderboard(client, dataset_sha256)
-    if not rows:
+    best = best_run(client, dataset_sha256)
+    if best is None:
         raise SeedError("no completed Run on the Leaderboard after seeding")
-    best = rows[0]
     _log(f"Best Run: {best.run_id} ({best.config_name}), mean CV RMSE {best.cv_rmse_mean:.4f}")
     if ref := registry.version_of_run(best.run_id, settings.registered_model):
         return ref
@@ -145,7 +144,6 @@ def _deploy_and_check(settings: Settings, ref: ModelVersionRef) -> None:
         answer = api.predict([SAMPLE_ROWS[0]])
     except ApiError as exc:
         raise SeedError(f"the API refused the seed: {exc}") from exc
-    answered_by = ModelVersionRef(answer.model_name, answer.model_version)
-    if answered_by != ref:
-        raise SeedError(f"/v1/predict answered with {answered_by}, expected {ref}")
+    if answer.ref != ref:
+        raise SeedError(f"/v1/predict answered with {answer.ref}, expected {ref}")
     _log(f"/v1/predict answered {answer.predictions[0]:.3f} {answer.unit} with {ref}")

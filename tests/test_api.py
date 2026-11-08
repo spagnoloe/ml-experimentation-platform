@@ -410,3 +410,12 @@ def test_an_unreachable_api_raises_an_error_without_a_status_code():
 
     assert raised.value.status_code is None
     assert "cannot reach the API" in raised.value.reason
+
+
+def test_through_the_client_a_rejected_request_body_gives_a_readable_reason(api):
+    with pytest.raises(ApiError) as raised:
+        ApiClient(api).deploy(ModelVersionRef("", 1))
+
+    assert raised.value.status_code == 422
+    assert raised.value.reason.startswith("body.model_name: ")
+    assert "[{" not in raised.value.reason

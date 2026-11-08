@@ -73,4 +73,14 @@ def _detail(response: httpx.Response) -> str:
         detail = response.json().get("detail", response.text)
     except (ValueError, AttributeError):
         return response.text
+    if isinstance(detail, list):
+        # FastAPI's own validation errors: one `{loc, msg}` per problem.
+        return "; ".join(_validation_error(error) for error in detail)
     return detail if isinstance(detail, str) else str(detail)
+
+
+def _validation_error(error: Any) -> str:
+    if not isinstance(error, dict):
+        return str(error)
+    where = ".".join(str(part) for part in error.get("loc", ()))
+    return f"{where}: {error.get('msg', '')}" if where else str(error.get("msg", error))

@@ -17,6 +17,8 @@ from app.tracking.runs import LeaderboardRow, leaderboard, run_details, run_url
 from app.ui import shared
 
 REFRESH_SECONDS = 2
+# Set by a successful register, shown once after the rerun that disables the button.
+_REGISTERED = "experiments.registered"
 IDLE_REFRESH_SECONDS = 10
 
 
@@ -252,12 +254,16 @@ def _register(row: LeaderboardRow) -> None:
         disabled=not name or existing is not None,
         key=f"register-button.{row.run_id}",
     )
-    if existing is not None:
+    if registered := st.session_state.pop(_REGISTERED, None):
+        st.success(f"Registered as Model Version {registered}.")
+    elif existing is not None:
         st.info(f"This Run is registered under {name} as Model Version {existing}.")
-    elif clicked:
+    if clicked:
         try:
             ref = registry.register_run(row.run_id, name)
         except RegistryError as exc:
             st.error(str(exc))
         else:
-            st.success(f"Registered as Model Version {ref}.")
+            # Rerun, so the button is drawn disabled for the Run now registered.
+            st.session_state[_REGISTERED] = str(ref)
+            st.rerun()

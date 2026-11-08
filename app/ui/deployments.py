@@ -35,12 +35,11 @@ def _active_model() -> None:
     if loaded is None:
         st.warning("No Model Version is loaded: `/v1/predict` answers 503.")
     else:
-        ref = ModelVersionRef(loaded.model_name, loaded.model_version)
         st.markdown(
-            f"Serving **{ref}** · {shared.algorithm_label(loaded.algorithm)} · "
+            f"Serving **{loaded.ref}** · {shared.algorithm_label(loaded.algorithm)} · "
             f"Run `{loaded.run_id}` · loaded {loaded.loaded_at:%Y-%m-%d %H:%M:%S} UTC"
         )
-    named = "none" if desired is None else f"{desired.model_name}/{desired.model_version}"
+    named = "none" if desired is None else str(desired.ref)
     if status.in_sync:
         st.success(f"`in_sync: true` · the latest Deployment names {named}.")
     else:
@@ -87,7 +86,7 @@ def _history() -> None:
             [
                 {
                     "Deployed": d.created_at,
-                    "Model Version": f"{d.model_name}/{d.model_version}",
+                    "Model Version": str(d.ref),
                     "Environment": d.environment,
                     "Id": d.id,
                 }
@@ -117,6 +116,5 @@ def _test_prediction() -> None:
     except ApiError as exc:
         st.error(f"Prediction failed. {exc}")
         return
-    answered_by = ModelVersionRef(answer.model_name, answer.model_version)
     st.metric(f"Predicted house value ({TARGET_UNIT})", f"{answer.predictions[0]:.3f}")
-    st.markdown(f"Answered by Model Version **{answered_by}**.")
+    st.markdown(f"Answered by Model Version **{answer.ref}**.")

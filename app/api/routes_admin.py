@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.dependencies import Manager
 from app.api.model_manager import DeploymentWriteError, ModelValidationError
-from app.api.schemas import LoadedModelOut
+from app.api.schemas import LoadedModelOut, ModelVersionOut
 from app.registry.model_version import MAX_MODEL_VERSION, ModelVersionRef
 
 router = APIRouter(tags=["admin"])
@@ -19,11 +19,9 @@ class DeployRequest(BaseModel):
     version: int = Field(ge=1, le=MAX_MODEL_VERSION)
 
 
-class DeploymentOut(BaseModel):
+class DeploymentOut(ModelVersionOut):
     id: int
     environment: str
-    model_name: str
-    model_version: int
     created_at: datetime
 
 

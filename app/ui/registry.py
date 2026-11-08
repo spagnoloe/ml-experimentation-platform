@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from app.registry.client import RegisteredModelSummary
-from app.tracking.runs import leaderboard
+from app.tracking.runs import best_run
 from app.ui import shared
 
 
@@ -15,8 +15,8 @@ def render() -> None:
         "Experiments page; deploy a Model Version from the Deployments page."
     )
     try:
-        best = leaderboard(shared.mlflow_client(), shared.current_dataset_sha256())
-        models = shared.registry().registered_models(best_run_id=best[0].run_id if best else None)
+        best = best_run(shared.mlflow_client(), shared.current_dataset_sha256())
+        models = shared.registry().registered_models(best_run_id=best.run_id if best else None)
     except Exception as exc:  # MLflow down or Dataset unreadable.
         st.error(f"Cannot load the registry: {exc}")
         return
