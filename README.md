@@ -34,7 +34,7 @@ Other commands: `make train CONFIG=configs/rf-random.yaml` submits an Experiment
 
 Each step maps to a requirement of the assignment. It assumes `make up && make seed` has run.
 
-1. **Launch.** On the **Experiments** page, under *Launch a Training Job*, pick an algorithm (linear regression, random forest, gradient boosting, or the dummy Baseline), toggle the bedrooms-per-room feature, choose the target transform, and choose **Fixed** hyperparameters or **Random search**. The caption shows how many Candidates and fits the job will run. Click **Launch** and watch the *Training Jobs* table: status, phase and a progress bar refresh every 2 seconds.
+1. **Launch.** On the **Experiments** page, under *Launch a Training Job*, pick an algorithm (linear regression, random forest, gradient boosting, or dummy, the mean predictor behind the **Baseline**), toggle the bedrooms-per-room feature, choose the target transform, and choose **Fixed** hyperparameters or **Random search**. The caption shows how many Candidates and fits the job will run. Click **Launch** and watch the *Training Jobs* table: status, phase and a progress bar refresh every 2 seconds.
    *Runtime of a default search* (10 Candidates × 5-fold CV, then one refit and the Test Set score), measured end to end on a 10-core laptop: **about 31 s for random forest** and **about 20 s for gradient boosting**. The same searches are in `configs/rf-random.yaml` and `configs/gb-random.yaml` for the CLI.
 2. **Compare.** When the job finishes, its Run appears on the **Leaderboard**, ranked by mean CV RMSE, with the **Best Run** starred and highlighted and the dummy **Baseline** shown as the bar every model must beat. Test-Set metrics are shown for information only. Select a row to see the Run's metrics, params and tags, or open it in the MLflow UI.
 3. **Register.** With a Run selected, click **Register** to create a new **Model Version** of `california-housing`. Registering changes nothing that is served. The **Registry** page lists every Model Version with its metrics and Run.
@@ -45,6 +45,7 @@ Each step maps to a requirement of the assignment. It assumes `make up && make s
    curl -s localhost:8000/v1/predict -H 'content-type: application/json' -d '{"rows": [
      {"MedInc": 8.3252, "HouseAge": 41, "AveRooms": 6.984, "AveBedrms": 1.024,
       "Population": 322, "AveOccup": 2.556, "Latitude": 37.88, "Longitude": -122.23}]}'
+   # Example answer; the version is whichever Model Version is active, and seed's Best Run may differ:
    # {"model_name":"california-housing","model_version":2,"predictions":[4.21...],"unit":"100k USD"}
    ```
 
@@ -71,7 +72,7 @@ Each step maps to a requirement of the assignment. It assumes `make up && make s
 
 ## Design summary
 
-- **Training.** An **Experiment Config** (YAML, from the UI or the CLI) queues a **Training Job** in Postgres. One worker claims jobs one at a time ([ADR-0003](docs/adr/0003-worker-polls-postgres-jobs-table.md)), evaluates each **Candidate** with 5-fold CV on a fixed 80% training portion, refits the winner, scores it once on the fixed **Test Set**, and records a **Run** with one child run per Candidate ([ADR-0004](docs/adr/0004-evaluation-protocol-and-persisted-pipeline.md)). The whole pipeline, feature step and target transform included, is persisted as one MLflow model, so serving re-implements nothing.
+- **Training.** An **Experiment Config** (YAML, from the UI or the CLI) queues a **Training Job** in Postgres. One worker claims jobs one at a time ([ADR-0003](docs/adr/0003-worker-polls-postgres-jobs-table.md)), evaluates each **Candidate** with 5-fold CV on a fixed 80% training portion, refits the winner, scores it once on the fixed **Test Set**, and records a **Run**, logging each Candidate as an MLflow child run ([ADR-0004](docs/adr/0004-evaluation-protocol-and-persisted-pipeline.md)). The whole pipeline, feature step and target transform included, is persisted as one MLflow model, so serving re-implements nothing.
 - **Tracking and registry.** MLflow holds Runs, metrics, models and Model Versions; our Postgres holds only Training Jobs and Deployments ([ADR-0002](docs/adr/0002-mlflow-for-tracking-and-registry.md)).
 - **Deploying.** A **Deployment** pins an exact Model Version in an append-only table written only by `POST /deploy`, after the model has loaded and passed validation. MLflow aliases are not used ([ADR-0001](docs/adr/0001-deployments-pin-versions-not-aliases.md)).
 - **Serving.** One API process holds the Active Model and swaps it atomically, so a response never mixes Model Versions. Consumer routes are versioned under `/v1`; admin routes (`/deploy`, `/deployments`) sit on a separate router so production can move them behind auth.
@@ -84,8 +85,8 @@ Further reading:
 
 ## Known limitations
 
-- **The CSV is not a random sample, so there is a geographic shift.** `data/training_data.csv` is exactly the first 16,512 rows of scikit-learn's California Housing dataset in their original order. The 4,128 missing rows are the dataset's tail and lean toward Northern California (mean latitude 37.1 against 35.3, mean target 2.26 against 2.02). Our random split and shuffled CV do not simulate that, so scores on the missing rows would likely be worse than our Test Set suggests. We treat the CSV as all the data we have and document the shift; production would monitor geographic drift ([ADR-0004](docs/adr/0004-evaluation-protocol-and-persisted-pipeline.md)).
-- **The target is capped at 5.00001.** 747 rows in the CSV sit at the cap, so errors on the most expensive districts are understated. We do not correct for it.
+- **The CSV is not a random sample, so there is a geographic shift.** `data/training_data.csv` is the first 16,512 rows of scikit-learn's California Housing dataset in their original order, and the missing rows lean toward Northern California. Our random split and shuffled CV do not simulate that, so scores on the missing rows would likely be worse than our Test Set suggests. [ADR-0004](docs/adr/0004-evaluation-protocol-and-persisted-pipeline.md) has the figures and why we accept it.
+- **The target is capped at 5.00001.** 747 rows in the CSV sit at or near the cap (724 at 5.00001, 23 at 5.0), so errors on the most expensive districts are understated. We do not correct for it.
 - **The API reconciles only at startup.** It loads the latest Deployment when it starts, and afterwards changes only through its own `/deploy`. A Deployment written any other way, such as a manual database edit, takes effect only after the API restarts. With one API process and `/deploy` as the only writer, this does not happen in the demo.
 - **Runs are ranked by mean CV RMSE, never by test RMSE.** The Leaderboard shows Test-Set scores next to each Run, but choosing a Run because its test RMSE is lowest turns the Test Set into a selection set: the chosen score is then optimistically biased, and nothing unseen is left to estimate how the model will do. That is notebook defect 8 again. The Test Set is a final, one-time check of a Run that was already chosen.
 - **Only Runs on the current Dataset are compared.** The Leaderboard filters on the Dataset's sha256, so editing the CSV starts a fresh Leaderboard.
