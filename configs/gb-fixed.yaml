@@ -1,0 +1,11 @@
+name: gb-fixed
+algorithm: gradient_boosting
+features:
+  bedrooms_per_room: false
+target_transform: log1p
+tuning:
+  mode: fixed
+  params:
+    n_estimators: 200
+    learning_rate: 0.1
+    max_depth: 3

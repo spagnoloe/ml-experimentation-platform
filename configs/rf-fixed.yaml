@@ -1,0 +1,13 @@
+# A fixed-hyperparameter Experiment Config. Submit with `make train CONFIG=configs/rf-fixed.yaml`.
+name: rf-fixed
+algorithm: random_forest          # linear_regression | random_forest | gradient_boosting
+features:
+  bedrooms_per_room: true
+target_transform: log1p           # none | log1p
+tuning:
+  mode: fixed
+  params:                         # estimator-level names, e.g. RandomForestRegressor's
+    n_estimators: 100
+    max_depth: 12
+    min_samples_leaf: 2
+random_state: 42

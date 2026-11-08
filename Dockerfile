@@ -20,4 +20,8 @@ COPY app ./app
 COPY data ./data
 RUN uv sync --frozen --no-dev
 
+# The commit the image was built from, recorded on every Run (.git is not in the image).
+ARG GIT_SHA=unknown
+ENV GIT_SHA=$GIT_SHA
+
 CMD ["python", "-c", "import app.settings; print('adp-experimentation-platform image')"]

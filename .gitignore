@@ -86,3 +86,7 @@ dmypy.json
 # IDEs
 .vscode/
 .idea/
+
+# Local MLflow stores
+mlruns/
+mlartifacts/
