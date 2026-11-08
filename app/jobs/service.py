@@ -18,6 +18,11 @@ def submit(jobs: JobRepository, raw_config: dict[str, Any] | ExperimentConfig) -
     )
 
 
+def recent(jobs: JobRepository, limit: int = 50) -> list[Job]:
+    """The most recently submitted Training Jobs, newest first."""
+    return jobs.recent(limit)
+
+
 def wait(
     jobs: JobRepository,
     job_id: uuid.UUID,

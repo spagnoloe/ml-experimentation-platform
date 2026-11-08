@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     app_db_url: str = "postgresql+psycopg://platform:platform@localhost:5432/app"
     test_db_url: str = "postgresql+psycopg://platform:platform@localhost:5432/app_test"
     mlflow_tracking_uri: str = "http://localhost:5001"
+    # Where a browser reaches the MLflow UI; in Compose this differs from the tracking URI.
+    mlflow_ui_url: str = "http://localhost:5001"
     mlflow_experiment: str = "california-housing"
     api_url: str = "http://localhost:8000"
     # The Deployments environment this API serves; only one exists in the proof of concept.

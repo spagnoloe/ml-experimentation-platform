@@ -10,6 +10,8 @@ x-app: &app
     APP_DB_URL: postgresql+psycopg://platform:platform@postgres:5432/app
     MLFLOW_TRACKING_URI: http://mlflow:5000
     API_URL: http://api:8000
+    # Links the UI renders are followed by the browser, so they use the host port.
+    MLFLOW_UI_URL: http://localhost:${MLFLOW_HOST_PORT:-5001}
 
 services:
   postgres:
@@ -88,6 +90,33 @@ services:
         - python
         - -c
         - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  ui:
+    <<: *app
+    command:
+      - streamlit
+      - run
+      - app/ui/main.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+    ports:
+      - "8501:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8501/_stcore/health')"
       interval: 3s
       timeout: 5s
       retries: 40
