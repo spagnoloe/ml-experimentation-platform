@@ -1,4 +1,4 @@
-.PHONY: install lint format test db up down logs image train
+.PHONY: install lint format test db up down logs image train ui
 
 # Recorded on every Run by the worker image.
 export GIT_SHA := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
@@ -38,3 +38,7 @@ image:
 train:
 	@test -n "$(CONFIG)" || (echo "usage: make train CONFIG=configs/rf-fixed.yaml" && exit 2)
 	uv run python -m app.cli submit $(CONFIG) --wait
+
+# Run the UI on the host against the Compose stack (`make up`), at http://localhost:8501.
+ui:
+	uv run streamlit run app/ui/main.py
