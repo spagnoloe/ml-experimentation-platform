@@ -5,7 +5,10 @@ import pytest
 from mlflow.tracking import MlflowClient
 
 from app.settings import get_settings
-from app.tracking.runs import leaderboard, run_url
+from app.tracking.runs import leaderboard, run_details, run_url
+
+# The evaluation protocol the runner logs on every Run, as in the default settings.
+PROTOCOL = {"split_seed": 42, "test_size": 0.2, "cv_folds": 5, "cv_seed": 42}
 
 
 @pytest.fixture
@@ -27,7 +30,7 @@ def _log_run(
 ) -> str:
     tags = {"config_name": name, "algorithm": algorithm, "dataset_sha256": dataset_sha256}
     with mlflow.start_run(run_name=name, tags=tags) as run:
-        mlflow.log_params(params or {})
+        mlflow.log_params({**PROTOCOL, **(params or {})})
         mlflow.log_metrics(
             {
                 "cv_rmse_mean": cv_rmse,
@@ -127,3 +130,26 @@ def test_each_row_links_to_its_run_in_the_mlflow_ui(dataset_sha256):
     url = run_url(row, "http://localhost:5001/")
 
     assert url == f"http://localhost:5001/#/experiments/{row.experiment_id}/runs/{run_id}"
+
+
+def test_runs_evaluated_with_a_different_split_or_folds_are_not_listed(dataset_sha256):
+    _log_run(dataset_sha256, name="current-protocol", cv_rmse=0.6)
+    _log_run(dataset_sha256, name="three-folds", cv_rmse=0.4, params={"cv_folds": 3})
+    _log_run(dataset_sha256, name="other-split", cv_rmse=0.4, params={"split_seed": 7})
+
+    rows = leaderboard(MlflowClient(), dataset_sha256)
+
+    assert [row.config_name for row in rows] == ["current-protocol"]
+
+
+def test_run_details_hold_every_metric_and_param_and_the_platforms_own_tags(dataset_sha256):
+    run_id = _log_run(dataset_sha256, name="detailed", cv_rmse=0.5, params={"max_depth": 12})
+
+    details = run_details(MlflowClient(), run_id)
+
+    assert details.metrics["cv_rmse_mean"] == pytest.approx(0.5)
+    assert details.metrics["test_r2"] == pytest.approx(0.79)
+    assert details.params["max_depth"] == "12"
+    assert details.params["cv_folds"] == "5"
+    assert details.tags["config_name"] == "detailed"
+    assert not any(tag.startswith("mlflow.") for tag in details.tags)

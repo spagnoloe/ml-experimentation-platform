@@ -1,5 +1,6 @@
 """Experiments page: launch a fixed Experiment Config, watch Training Jobs, compare Runs."""
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -14,15 +15,20 @@ from app.jobs.config import ConfigError
 from app.ml.algorithms import ALGORITHMS
 from app.ml.data import load_dataset
 from app.settings import get_settings
-from app.tracking.runs import LeaderboardRow, leaderboard, run_url
+from app.tracking.runs import LeaderboardRow, leaderboard, run_details, run_url
 
 REFRESH_SECONDS = 2
+IDLE_REFRESH_SECONDS = 10
 
 ALGORITHM_LABELS = {
     "linear_regression": "Linear regression",
     "random_forest": "Random forest",
     "gradient_boosting": "Gradient boosting",
 }
+
+
+def _label(algorithm: str) -> str:
+    return ALGORITHM_LABELS.get(algorithm, algorithm)
 
 
 @st.cache_resource
@@ -71,9 +77,7 @@ def _param_input(algorithm: str, name: str, default: Any) -> Any:
 def _config_form() -> None:
     st.subheader("Launch a Training Job")
     # Outside the form, so changing it reruns the page and refills the defaults below.
-    algorithm = st.selectbox(
-        "Algorithm", list(ALGORITHMS), format_func=lambda a: ALGORITHM_LABELS.get(a, a)
-    )
+    algorithm = st.selectbox("Algorithm", list(ALGORITHMS), format_func=_label)
     defaults = ALGORITHMS[algorithm].default_params
 
     with st.form("experiment-config"):
@@ -104,7 +108,8 @@ def _config_form() -> None:
             try:
                 job = service.submit(_jobs(), raw)
             except ConfigError as exc:
-                st.error(str(exc))
+                # A code block keeps one problem per line; st.error alone renders Markdown.
+                st.error(f"```\n{exc}\n```")
             else:
                 st.success(f"Queued {job.name} ({job.id}).")
 
@@ -134,8 +139,9 @@ def _jobs_section() -> None:
     st.subheader("Training Jobs")
     active = any(not job.finished for job in service.recent(_jobs()))
 
-    # Refreshes itself only while a job is queued or running.
-    @st.fragment(run_every=REFRESH_SECONDS if active else None)
+    # Every 2 seconds while a job is queued or running; otherwise a slow poll, so a job
+    # submitted from the CLI or another tab still switches the fast refresh on.
+    @st.fragment(run_every=REFRESH_SECONDS if active else IDLE_REFRESH_SECONDS)
     def jobs_table() -> None:
         jobs = service.recent(_jobs())
         if not jobs:
@@ -149,13 +155,12 @@ def _jobs_section() -> None:
                     "Submitted": st.column_config.DatetimeColumn(format="YYYY-MM-DD HH:mm:ss"),
                 },
             )
-        if active and all(job.finished for job in jobs):
-            # Rerun the whole page: stop refreshing and show the new Runs on the Leaderboard.
+        if active != any(not job.finished for job in jobs):
+            # Rerun the whole page to change the refresh rate, and when jobs have finished,
+            # to show their Runs on the Leaderboard.
             st.rerun()
 
     jobs_table()
-    if not active:
-        st.button("Refresh", key="refresh-jobs", help="Pick up jobs submitted from the CLI.")
 
 
 # Compare ----------------------------------------------------------------------------------
@@ -171,7 +176,7 @@ def _leaderboard_frame(rows: list[LeaderboardRow], mlflow_ui_url: str) -> pd.Dat
             {
                 "Best": "★ Best Run" if row.is_best else "",
                 "Config": row.config_name,
-                "Algorithm": ALGORITHM_LABELS.get(row.algorithm, row.algorithm),
+                "Algorithm": _label(row.algorithm),
                 "CV RMSE": f"{row.cv_rmse_mean:.4f} ± {row.cv_rmse_std:.4f}",
                 "CV MAE": _fmt(row.cv_mae_mean),
                 "CV R²": _fmt(row.cv_r2_mean),
@@ -210,10 +215,13 @@ def _leaderboard_section() -> None:
         return
 
     frame = _leaderboard_frame(rows, settings.mlflow_ui_url)
+    # Selections are row positions, so a new key whenever the Runs change clears the
+    # selection instead of silently pointing it at another Run.
+    run_ids = ",".join(row.run_id for row in rows)
     selection = st.dataframe(
         frame.style.apply(_highlight_best, axis=1),
         hide_index=True,
-        key="leaderboard",
+        key=f"leaderboard-{hashlib.sha1(run_ids.encode()).hexdigest()[:12]}",
         on_select="rerun",
         selection_mode="single-row",
         column_config={
@@ -228,25 +236,23 @@ def _leaderboard_section() -> None:
 
 
 def _run_details(row: LeaderboardRow, mlflow_ui_url: str) -> None:
-    run = _mlflow().get_run(row.run_id)
+    details = run_details(_mlflow(), row.run_id)
     st.markdown(
-        f"#### {row.config_name} · {ALGORITHM_LABELS.get(row.algorithm, row.algorithm)}"
-        f"{' · ★ Best Run' if row.is_best else ''}"
+        f"#### {row.config_name} · {_label(row.algorithm)}{' · ★ Best Run' if row.is_best else ''}"
     )
     st.markdown(f"Run `{row.run_id}` · [Open in the MLflow UI]({run_url(row, mlflow_ui_url)})")
     metrics, params, tags = st.columns(3)
     metrics.markdown("**Metrics**")
     metrics.dataframe(
-        pd.DataFrame(sorted(run.data.metrics.items()), columns=["Metric", "Value"]),
+        pd.DataFrame(sorted(details.metrics.items()), columns=["Metric", "Value"]),
         hide_index=True,
     )
     params.markdown("**Params**")
     params.dataframe(
-        pd.DataFrame(sorted(run.data.params.items()), columns=["Param", "Value"]),
+        pd.DataFrame(sorted(details.params.items()), columns=["Param", "Value"]),
         hide_index=True,
     )
     tags.markdown("**Tags**")
-    visible_tags = {k: v for k, v in run.data.tags.items() if not k.startswith("mlflow.")}
     tags.dataframe(
-        pd.DataFrame(sorted(visible_tags.items()), columns=["Tag", "Value"]), hide_index=True
+        pd.DataFrame(sorted(details.tags.items()), columns=["Tag", "Value"]), hide_index=True
     )

@@ -33,14 +33,25 @@ class LeaderboardRow:
 
 def leaderboard(client: MlflowClient, dataset_sha256: str) -> list[LeaderboardRow]:
     """Completed Runs on the Dataset with this hash, best (lowest mean CV RMSE) first."""
-    experiment = client.get_experiment_by_name(get_settings().mlflow_experiment)
+    settings = get_settings()
+    experiment = client.get_experiment_by_name(settings.mlflow_experiment)
     if experiment is None:
         return []
+    # Runs scored with another split or other folds are not comparable (ADR-0004).
+    protocol = {
+        "split_seed": settings.split_seed,
+        "test_size": settings.test_size,
+        "cv_folds": settings.cv_folds,
+        "cv_seed": settings.cv_seed,
+    }
+    filters = [
+        f"tags.dataset_sha256 = '{dataset_sha256}'",
+        "attributes.status = 'FINISHED'",
+        *(f"params.{name} = '{value}'" for name, value in protocol.items()),
+    ]
     runs = client.search_runs(
         [experiment.experiment_id],
-        filter_string=(
-            f"tags.dataset_sha256 = '{dataset_sha256}' and attributes.status = 'FINISHED'"
-        ),
+        filter_string=" and ".join(filters),
         order_by=["metrics.cv_rmse_mean ASC"],
     )
     # Candidates are child runs of their Run; only Runs belong on the Leaderboard.
@@ -81,6 +92,23 @@ def _key_params(algorithm: str, params: dict[str, str]) -> dict[str, str]:
         for name, value in params.items()
         if name in hyperparameters or name in _FEATURE_PARAMS
     }
+
+
+@dataclass(frozen=True)
+class RunDetails:
+    metrics: dict[str, float]
+    params: dict[str, str]
+    # The tags this platform sets; MLflow's own `mlflow.*` tags are left out.
+    tags: dict[str, str]
+
+
+def run_details(client: MlflowClient, run_id: str) -> RunDetails:
+    data = client.get_run(run_id).data
+    return RunDetails(
+        metrics=dict(data.metrics),
+        params=dict(data.params),
+        tags={k: v for k, v in data.tags.items() if not k.startswith("mlflow.")},
+    )
 
 
 def run_url(row: LeaderboardRow, mlflow_ui_url: str) -> str:
