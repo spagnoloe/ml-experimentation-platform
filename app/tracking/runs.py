@@ -52,7 +52,8 @@ def leaderboard(client: MlflowClient, dataset_sha256: str) -> list[LeaderboardRo
     runs = client.search_runs(
         [experiment.experiment_id],
         filter_string=" and ".join(filters),
-        order_by=["metrics.cv_rmse_mean ASC"],
+        # On a tie (e.g. a re-seed of the same config) the earliest Run stays the Best Run.
+        order_by=["metrics.cv_rmse_mean ASC", "attributes.start_time ASC"],
     )
     # Candidates are child runs of their Run; only Runs belong on the Leaderboard.
     runs = [

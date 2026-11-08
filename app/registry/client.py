@@ -10,9 +10,13 @@ from mlflow.tracking import MlflowClient
 
 from app.registry.model_version import ModelVersionRef
 
+# Copied from the Run onto each Model Version it is registered as.
+_RUN_TAGS = ("job_id", "algorithm", "dataset_sha256")
+_RUN_METRICS = ("cv_rmse_mean", "cv_rmse_std", "test_rmse")
+
 
 class RegistryError(Exception):
-    """A Model Version cannot be found or loaded."""
+    """The registry cannot find, load or register a Model Version; the message says why."""
 
 
 @dataclass(frozen=True)
@@ -66,3 +70,46 @@ class MlflowRegistryClient:
         except Exception as exc:
             raise RegistryError(f"cannot read Model Version {ref}: {exc}") from exc
         return VersionMetadata(run_id=version.run_id, algorithm=algorithm)
+
+    def register_run(self, run_id: str, model_name: str) -> ModelVersionRef:
+        """Register a completed Run's pipeline as the next Model Version of `model_name`.
+
+        A Run is registered at most once per name. The version is tagged so the registry needs
+        no Run lookups. Nothing is deployed (ADR-0001).
+        """
+        if existing := self.version_of_run(run_id, model_name):
+            raise RegistryError(f"Run {run_id} is already registered as {existing}")
+        try:
+            run = self._client.get_run(run_id)
+        except Exception as exc:
+            raise RegistryError(f"cannot read Run {run_id}: {exc}") from exc
+        tags = {name: run.data.tags.get(name) for name in _RUN_TAGS}
+        tags |= {name: run.data.metrics.get(name) for name in _RUN_METRICS}
+        if missing := [name for name, value in tags.items() if value is None]:
+            raise RegistryError(f"Run {run_id} has no {', '.join(missing)}; is it completed?")
+        # MLflow 3 logs the pipeline as a Logged Model output of the Run, not a run artifact.
+        outputs = run.outputs.model_outputs if run.outputs else []
+        if len(outputs) != 1:
+            raise RegistryError(f"Run {run_id} has {len(outputs)} logged models, expected 1")
+        try:
+            version = mlflow.register_model(
+                f"models:/{outputs[0].model_id}",
+                model_name,
+                tags={name: str(value) for name, value in tags.items()},
+                await_registration_for=60,
+            )
+        except Exception as exc:
+            raise RegistryError(f"cannot register Run {run_id} as {model_name}: {exc}") from exc
+        return ModelVersionRef(model_name, int(version.version))
+
+    def version_of_run(self, run_id: str, model_name: str) -> ModelVersionRef | None:
+        """The Model Version of `model_name` made from this Run, if it is registered."""
+        try:
+            found = self._client.search_model_versions(
+                f"name = '{model_name}' and run_id = '{run_id}'"
+            )
+        except Exception as exc:
+            raise RegistryError(f"cannot search Model Versions of {model_name}: {exc}") from exc
+        # Only the oldest counts, should versions ever be registered outside this client.
+        oldest = min((int(v.version) for v in found), default=None)
+        return None if oldest is None else ModelVersionRef(model_name, oldest)
