@@ -1,6 +1,7 @@
 """The only code that talks to the MLflow registry. Tests replace it with a fake."""
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol
 
 import mlflow
@@ -23,6 +24,26 @@ class RegistryError(Exception):
 class VersionMetadata:
     run_id: str
     algorithm: str | None
+
+
+@dataclass(frozen=True)
+class VersionSummary:
+    """A Model Version as the Registry page lists it."""
+
+    ref: ModelVersionRef
+    run_id: str
+    created_at: datetime
+    # The tags copied from the Run at registration (`register_run`).
+    tags: dict[str, str]
+    # Made from the Best Run, so the Registry page gives it the "best" badge.
+    is_best: bool
+
+
+@dataclass(frozen=True)
+class RegisteredModelSummary:
+    name: str
+    # Newest first.
+    versions: list[VersionSummary]
 
 
 class RegistryModel(Protocol):
@@ -113,3 +134,29 @@ class MlflowRegistryClient:
         # Only the oldest counts, should versions ever be registered outside this client.
         oldest = min((int(v.version) for v in found), default=None)
         return None if oldest is None else ModelVersionRef(model_name, oldest)
+
+    def registered_models(self, *, best_run_id: str | None) -> list[RegisteredModelSummary]:
+        """Every Registered Model by name, with its Model Versions newest first.
+
+        A version made from `best_run_id` (the Best Run, if there is one) is marked `is_best`.
+        """
+        try:
+            models = self._client.search_registered_models(order_by=["name ASC"])
+            versions = self._client.search_model_versions()
+        except Exception as exc:
+            raise RegistryError(f"cannot list Registered Models: {exc}") from exc
+        by_name: dict[str, list[VersionSummary]] = {model.name: [] for model in models}
+        for version in versions:
+            by_name.setdefault(version.name, []).append(
+                VersionSummary(
+                    ref=ModelVersionRef(version.name, int(version.version)),
+                    run_id=version.run_id,
+                    created_at=datetime.fromtimestamp(version.creation_timestamp / 1000, UTC),
+                    tags=dict(version.tags),
+                    is_best=best_run_id is not None and version.run_id == best_run_id,
+                )
+            )
+        return [
+            RegisteredModelSummary(name, sorted(found, key=lambda v: -v.ref.model_version))
+            for name, found in sorted(by_name.items())
+        ]

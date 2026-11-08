@@ -6,7 +6,6 @@ Running it again adds new Runs and Model Versions; it never resets anything.
 """
 
 from pathlib import Path
-from typing import Any
 
 import httpx
 import yaml
@@ -14,6 +13,7 @@ from mlflow.tracking import MlflowClient
 from sqlalchemy import make_url
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.api.client import ApiClient, ApiError
 from app.db.repositories import Job, JobRepository
 from app.db.session import get_engine
 from app.jobs import service
@@ -27,7 +27,6 @@ from app.tracking.runs import leaderboard
 SEED_CONFIGS = Path(__file__).resolve().parent.parent / "configs" / "seed"
 # Per job; seed jobs take seconds, so hitting this means the worker is not picking them up.
 JOB_TIMEOUT_SECONDS = 300
-HTTP_TIMEOUT_SECONDS = 60
 _NOT_RUNNING_HINT = "is the stack running? Start it with `make up`"
 
 
@@ -139,29 +138,14 @@ def _best_run_version(
 
 
 def _deploy_and_check(settings: Settings, ref: ModelVersionRef) -> None:
-    _post(settings, "/deploy", {"model_name": ref.model_name, "version": ref.model_version})
-    _log(f"deployed Model Version {ref}; it is the Active Model")
-
-    answer = _post(settings, "/v1/predict", {"rows": [SAMPLE_ROWS[0]]})
-    answered_by = ModelVersionRef(answer["model_name"], answer["model_version"])
+    api = ApiClient.at(settings.api_url)
+    try:
+        api.deploy(ref)
+        _log(f"deployed Model Version {ref}; it is the Active Model")
+        answer = api.predict([SAMPLE_ROWS[0]])
+    except ApiError as exc:
+        raise SeedError(f"the API refused the seed: {exc}") from exc
+    answered_by = ModelVersionRef(answer.model_name, answer.model_version)
     if answered_by != ref:
         raise SeedError(f"/v1/predict answered with {answered_by}, expected {ref}")
-    _log(f"/v1/predict answered {answer['predictions'][0]:.3f} {answer['unit']} with {ref}")
-
-
-def _post(settings: Settings, path: str, body: dict[str, Any]) -> dict[str, Any]:
-    url = f"{settings.api_url.rstrip('/')}{path}"
-    try:
-        response = httpx.post(url, json=body, timeout=HTTP_TIMEOUT_SECONDS)
-    except httpx.HTTPError as exc:
-        raise SeedError(f"cannot reach the API at {url}: {exc}") from exc
-    if response.is_error:
-        raise SeedError(f"POST {path} failed ({response.status_code}): {_detail(response)}")
-    return response.json()
-
-
-def _detail(response: httpx.Response) -> str:
-    try:
-        return str(response.json().get("detail", response.text))
-    except ValueError:
-        return response.text
+    _log(f"/v1/predict answered {answer.predictions[0]:.3f} {answer.unit} with {ref}")

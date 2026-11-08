@@ -1,56 +1,28 @@
 """Experiments page: launch a fixed Experiment Config, watch Training Jobs, compare Runs."""
 
 import hashlib
-from pathlib import Path
 from typing import Any
 
 import pandas as pd
 import streamlit as st
-from mlflow.tracking import MlflowClient
 
 from app.db.repositories import Job, JobRepository
 from app.db.session import get_engine
 from app.jobs import service
 from app.jobs.config import ConfigError
 from app.ml.algorithms import ALGORITHMS
-from app.ml.data import load_dataset
+from app.registry.client import RegistryError
 from app.settings import get_settings
 from app.tracking.runs import LeaderboardRow, leaderboard, run_details, run_url
+from app.ui import shared
 
 REFRESH_SECONDS = 2
 IDLE_REFRESH_SECONDS = 10
-
-ALGORITHM_LABELS = {
-    "linear_regression": "Linear regression",
-    "random_forest": "Random forest",
-    "gradient_boosting": "Gradient boosting",
-}
-
-
-def _label(algorithm: str) -> str:
-    return ALGORITHM_LABELS.get(algorithm, algorithm)
 
 
 @st.cache_resource
 def _jobs() -> JobRepository:
     return JobRepository(get_engine())
-
-
-@st.cache_resource
-def _mlflow() -> MlflowClient:
-    uri = get_settings().mlflow_tracking_uri
-    return MlflowClient(tracking_uri=uri, registry_uri=uri)
-
-
-@st.cache_data
-def _dataset_sha256(path: str, modified_ns: int) -> str:
-    # Keyed on the modification time too, so replacing the file changes the current Dataset.
-    return load_dataset(path).sha256
-
-
-def _current_dataset_sha256() -> str:
-    path = Path(get_settings().data_path)
-    return _dataset_sha256(str(path), path.stat().st_mtime_ns)
 
 
 def render() -> None:
@@ -77,7 +49,7 @@ def _param_input(algorithm: str, name: str, default: Any) -> Any:
 def _config_form() -> None:
     st.subheader("Launch a Training Job")
     # Outside the form, so changing it reruns the page and refills the defaults below.
-    algorithm = st.selectbox("Algorithm", list(ALGORITHMS), format_func=_label)
+    algorithm = st.selectbox("Algorithm", list(ALGORITHMS), format_func=shared.algorithm_label)
     defaults = ALGORITHMS[algorithm].default_params
 
     with st.form("experiment-config"):
@@ -176,7 +148,7 @@ def _leaderboard_frame(rows: list[LeaderboardRow], mlflow_ui_url: str) -> pd.Dat
             {
                 "Best": "★ Best Run" if row.is_best else "",
                 "Config": row.config_name,
-                "Algorithm": _label(row.algorithm),
+                "Algorithm": shared.algorithm_label(row.algorithm),
                 "CV RMSE": f"{row.cv_rmse_mean:.4f} ± {row.cv_rmse_std:.4f}",
                 "CV MAE": _fmt(row.cv_mae_mean),
                 "CV R²": _fmt(row.cv_r2_mean),
@@ -200,8 +172,8 @@ def _leaderboard_section() -> None:
     settings = get_settings()
     st.subheader("Leaderboard")
     try:
-        dataset_sha256 = _current_dataset_sha256()
-        rows = leaderboard(_mlflow(), dataset_sha256)
+        dataset_sha256 = shared.current_dataset_sha256()
+        rows = leaderboard(shared.mlflow_client(), dataset_sha256)
     except Exception as exc:  # MLflow down or Dataset unreadable: keep the rest of the page.
         st.error(f"Cannot load the Leaderboard: {exc}")
         return
@@ -236,10 +208,9 @@ def _leaderboard_section() -> None:
 
 
 def _run_details(row: LeaderboardRow, mlflow_ui_url: str) -> None:
-    details = run_details(_mlflow(), row.run_id)
-    st.markdown(
-        f"#### {row.config_name} · {_label(row.algorithm)}{' · ★ Best Run' if row.is_best else ''}"
-    )
+    details = run_details(shared.mlflow_client(), row.run_id)
+    best = " · ★ Best Run" if row.is_best else ""
+    st.markdown(f"#### {row.config_name} · {shared.algorithm_label(row.algorithm)}{best}")
     st.markdown(f"Run `{row.run_id}` · [Open in the MLflow UI]({run_url(row, mlflow_ui_url)})")
     metrics, params, tags = st.columns(3)
     metrics.markdown("**Metrics**")
@@ -256,3 +227,37 @@ def _run_details(row: LeaderboardRow, mlflow_ui_url: str) -> None:
     tags.dataframe(
         pd.DataFrame(sorted(details.tags.items()), columns=["Tag", "Value"]), hide_index=True
     )
+    _register(row)
+
+
+def _register(row: LeaderboardRow) -> None:
+    st.markdown("**Register as a Model Version**")
+    st.caption(
+        "Registering makes the Run deployable; it never changes the Active Model. "
+        "Deploy it from the Deployments page."
+    )
+    name_column, button_column = st.columns([3, 1], vertical_alignment="bottom")
+    name = name_column.text_input(
+        "Registered Model", value=get_settings().registered_model, key=f"register.{row.run_id}"
+    ).strip()
+    registry = shared.registry()
+    try:
+        existing = registry.version_of_run(row.run_id, name) if name else None
+    except RegistryError as exc:
+        st.error(str(exc))
+        return
+    clicked = button_column.button(
+        "Register",
+        type="primary",
+        disabled=not name or existing is not None,
+        key=f"register-button.{row.run_id}",
+    )
+    if existing is not None:
+        st.info(f"This Run is registered under {name} as Model Version {existing}.")
+    elif clicked:
+        try:
+            ref = registry.register_run(row.run_id, name)
+        except RegistryError as exc:
+            st.error(str(exc))
+        else:
+            st.success(f"Registered as Model Version {ref}.")
