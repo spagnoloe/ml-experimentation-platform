@@ -142,3 +142,28 @@ def test_tuning_without_a_mode_is_fixed(jobs):
     job = service.submit(jobs, config)
 
     assert jobs.get(job.id).config["tuning"] == {"mode": "fixed", "params": {"max_depth": 5}}
+
+
+DUMMY_CONFIG = {"name": "baseline", "algorithm": "dummy", "tuning": {"mode": "fixed"}}
+
+
+def test_a_dummy_config_queues_one_job_with_one_candidate(jobs):
+    job = service.submit(jobs, DUMMY_CONFIG)
+
+    stored = jobs.get(job.id)
+    assert stored.config["algorithm"] == "dummy"
+    assert (stored.progress_done, stored.progress_total) == (0, 1)
+
+
+@pytest.mark.parametrize(
+    "tuning",
+    [
+        {"mode": "fixed", "params": {"strategy": "median"}},
+        {"mode": "random", "n_iter": 2, "params": {"strategy": ["mean", "median"]}},
+    ],
+)
+def test_dummy_with_params_or_in_random_mode_is_rejected_at_submit(jobs, tuning):
+    with pytest.raises(ConfigError, match="dummy takes no hyperparameters"):
+        service.submit(jobs, {**DUMMY_CONFIG, "tuning": tuning})
+
+    assert jobs.recent() == []

@@ -16,7 +16,7 @@ from sklearn.model_selection import ParameterSampler
 
 from app.ml.algorithms import ALGORITHMS
 
-AlgorithmName = Literal["linear_regression", "random_forest", "gradient_boosting"]
+AlgorithmName = Literal["linear_regression", "random_forest", "gradient_boosting", "dummy"]
 ParamValue = bool | int | float | str | None
 
 
@@ -163,6 +163,12 @@ class ExperimentConfig(_Strict):
 
     @model_validator(mode="after")
     def _params_belong_to_the_algorithm(self) -> "ExperimentConfig":
+        if ALGORITHMS[self.algorithm].is_baseline and (
+            self.tuning.mode == "random" or self.tuning.params
+        ):
+            raise ValueError(
+                f"{self.algorithm} takes no hyperparameters; use mode: fixed with no params"
+            )
         names = set(self.tuning.params)
         if "random_state" in names:
             raise ValueError("set random_state at the top level of the config, not in params")

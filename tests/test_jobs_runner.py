@@ -182,3 +182,24 @@ def test_a_random_search_logs_n_iter_candidates_and_the_run_records_the_winner(
     assert run.data.metrics["cv_rmse_mean"] == winner.data.metrics["cv_rmse_mean"]
     for name in ("n_estimators", "learning_rate", "max_depth"):
         assert run.data.params[name] == winner.data.params[name]
+
+
+def test_a_dummy_job_completes_with_a_mean_predictor_run(jobs, mlflow_store, dataset):
+    job = service.submit(jobs, {"name": "baseline", "algorithm": "dummy"})
+    jobs.claim(job.id)
+
+    run_job(jobs, job.id, dataset=dataset)
+
+    done = jobs.get(job.id)
+    assert done.status == "completed", done.error
+    run = _run(done.mlflow_run_id)
+    assert run.data.tags["algorithm"] == "dummy"
+    metrics = run.data.metrics
+    # A mean predictor explains nothing, and its RMSE is about the target's std (~1.15).
+    assert abs(metrics["cv_r2_mean"]) < 0.01
+    assert abs(metrics["test_r2"]) < 0.01
+    assert 1.0 < metrics["cv_rmse_mean"] < 1.3
+
+    model = mlflow.pyfunc.load_model(f"runs:/{run.info.run_id}/model")
+    predictions = np.asarray(model.predict(pd.DataFrame(SAMPLE_ROWS)))
+    assert np.unique(predictions).size == 1

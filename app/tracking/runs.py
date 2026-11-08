@@ -70,6 +70,19 @@ def best_run(client: MlflowClient, dataset_sha256: str) -> LeaderboardRow | None
     return rows[0] if rows else None
 
 
+def baseline(rows: list[LeaderboardRow]) -> LeaderboardRow | None:
+    """The top-ranked Baseline Run among these ranked Leaderboard rows, or None without one.
+
+    It is the reference every model should beat; it is ranked like any other Run.
+    """
+    return next((row for row in rows if _is_baseline(row.algorithm)), None)
+
+
+def _is_baseline(algorithm: str) -> bool:
+    known = ALGORITHMS.get(algorithm)
+    return known is not None and known.is_baseline
+
+
 def _row(run: Run, *, is_best: bool) -> LeaderboardRow:
     metrics = run.data.metrics
     algorithm = run.data.tags.get("algorithm", "")

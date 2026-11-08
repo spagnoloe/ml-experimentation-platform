@@ -1,0 +1,11 @@
+# Seed config: submitted by `make seed`, one per algorithm. Fixed hyperparameters keep seed fast.
+# The dummy has none: it is the Baseline every model should beat.
+name: seed-dummy
+algorithm: dummy
+features:
+  bedrooms_per_room: false
+target_transform: none
+tuning:
+  mode: fixed
+  params: {}
+random_state: 42

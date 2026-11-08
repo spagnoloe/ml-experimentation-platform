@@ -1,0 +1,5 @@
+# The baseline: predicts the training target's mean. Fixed mode only, and it takes no params.
+name: dummy-fixed
+algorithm: dummy
+tuning:
+  mode: fixed
