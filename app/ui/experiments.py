@@ -1,10 +1,11 @@
-"""Experiments page: launch a fixed Experiment Config, watch Training Jobs, compare Runs."""
+"""Experiments page: launch an Experiment Config, watch Training Jobs, compare Runs."""
 
 import hashlib
 from typing import Any
 
 import pandas as pd
 import streamlit as st
+import yaml
 
 from app.db.repositories import Job, JobRepository
 from app.db.session import get_engine
@@ -48,36 +49,80 @@ def _param_input(algorithm: str, name: str, default: Any) -> Any:
     return st.text_input(name, value=str(default), key=key)
 
 
+def _search_space_yaml(algorithm: str) -> str:
+    return yaml.safe_dump(
+        ALGORITHMS[algorithm].search_space, sort_keys=False, default_flow_style=None
+    )
+
+
 def _config_form() -> None:
     st.subheader("Launch a Training Job")
-    # Outside the form, so changing it reruns the page and refills the defaults below.
+    # Outside the form, so changing them reruns the page: the defaults below are refilled
+    # and the Candidate count is up to date before launch.
     algorithm = st.selectbox("Algorithm", list(ALGORITHMS), format_func=shared.algorithm_label)
     defaults = ALGORITHMS[algorithm].default_params
+    searchable = bool(ALGORITHMS[algorithm].search_space)
+    left, right = st.columns(2)
+    mode = left.radio(
+        "Hyperparameters",
+        ["fixed", "random"] if searchable else ["fixed"],
+        format_func={"fixed": "Fixed", "random": "Random search"}.get,
+        horizontal=True,
+        key=f"mode.{algorithm}",
+    )
+    n_iter = 1
+    if mode == "random":
+        n_iter = int(right.number_input("Candidates (n_iter)", min_value=1, max_value=50, value=10))
+    folds = get_settings().cv_folds
+    st.caption(
+        f"This job evaluates **{n_iter} Candidate{'s' if n_iter != 1 else ''}** with "
+        f"{folds}-fold CV ({n_iter * folds} fits), then refits the winner once."
+        + ("" if searchable else " This algorithm has no search space; it runs fixed only.")
+    )
 
     with st.form("experiment-config"):
-        name = st.text_input("Name", value=f"{algorithm}-fixed", key=f"name.{algorithm}")
+        name = st.text_input("Name", value=f"{algorithm}-{mode}", key=f"name.{algorithm}.{mode}")
         left, right = st.columns(2)
         bedrooms_per_room = left.toggle("Add bedrooms-per-room feature", value=True)
         target_transform = right.radio(
             "Target transform", ["none", "log1p"], horizontal=True, index=1
         )
 
-        st.markdown("**Hyperparameters** (fixed)")
-        params = {}
-        if not defaults:
-            st.caption("This algorithm has no hyperparameters to set.")
-        columns = st.columns(len(defaults)) if defaults else []
-        for column, (param, default) in zip(columns, defaults.items(), strict=True):
-            with column:
-                params[param] = _param_input(algorithm, param, default)
+        if mode == "random":
+            st.markdown("**Search space**")
+            space_text = st.text_area(
+                "Lists are sampled uniformly; ranges are `{type: int|float, low, high}`, "
+                "with `log: true` for a log-scaled float range.",
+                value=_search_space_yaml(algorithm),
+                height=150,
+                key=f"space.{algorithm}",
+            )
+        else:
+            st.markdown("**Hyperparameters** (fixed)")
+            params = {}
+            if not defaults:
+                st.caption("This algorithm has no hyperparameters to set.")
+            columns = st.columns(len(defaults)) if defaults else []
+            for column, (param, default) in zip(columns, defaults.items(), strict=True):
+                with column:
+                    params[param] = _param_input(algorithm, param, default)
 
         if st.form_submit_button("Launch", type="primary"):
+            if mode == "random":
+                try:
+                    space = yaml.safe_load(space_text)
+                except yaml.YAMLError as exc:
+                    st.error(f"The search space is not valid YAML:\n```\n{exc}\n```")
+                    return
+                tuning = {"mode": "random", "n_iter": n_iter, "params": space}
+            else:
+                tuning = {"mode": "fixed", "params": params}
             raw = {
                 "name": name,
                 "algorithm": algorithm,
                 "features": {"bedrooms_per_room": bedrooms_per_room},
                 "target_transform": target_transform,
-                "tuning": {"mode": "fixed", "params": params},
+                "tuning": tuning,
             }
             try:
                 job = service.submit(_jobs(), raw)
@@ -85,7 +130,7 @@ def _config_form() -> None:
                 # A code block keeps one problem per line; st.error alone renders Markdown.
                 st.error(f"```\n{exc}\n```")
             else:
-                st.success(f"Queued {job.name} ({job.id}).")
+                st.success(f"Queued {job.name} ({job.id}): {job.progress_total} Candidate(s).")
 
 
 # Watch ------------------------------------------------------------------------------------

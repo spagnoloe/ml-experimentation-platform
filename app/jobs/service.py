@@ -14,7 +14,7 @@ def submit(jobs: JobRepository, raw_config: dict[str, Any] | ExperimentConfig) -
     return jobs.insert(
         name=config.name,
         config=config.model_dump(mode="json"),
-        progress_total=len(config.candidates()),
+        progress_total=config.candidate_count,
     )
 
 

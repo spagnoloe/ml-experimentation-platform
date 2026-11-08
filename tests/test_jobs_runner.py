@@ -114,3 +114,71 @@ def test_an_exception_during_a_job_marks_the_job_and_the_run_failed(jobs, mlflow
     assert "n_estimators" in failed.error
     assert failed.finished_at is not None
     assert _run(failed.mlflow_run_id).info.status == "FAILED"
+
+
+GB_RANDOM = {
+    "name": "gb-random",
+    "algorithm": "gradient_boosting",
+    "tuning": {
+        "mode": "random",
+        "n_iter": 3,
+        "params": {
+            "n_estimators": {"type": "int", "low": 5, "high": 15},
+            "learning_rate": {"type": "float", "low": 0.05, "high": 0.3, "log": True},
+            "max_depth": [2, 3],
+        },
+    },
+}
+
+
+class ProgressSpy:
+    """The real repository, also remembering every `progress_done` the runner reports."""
+
+    def __init__(self, jobs):
+        self._jobs = jobs
+        self.done: list[tuple[int, int]] = []
+
+    def __getattr__(self, name):
+        return getattr(self._jobs, name)
+
+    def record_progress(self, job_id, **fields):
+        self._jobs.record_progress(job_id, **fields)
+        if "progress_done" in fields:
+            job = self._jobs.get(job_id)
+            self.done.append((job.progress_done, job.progress_total))
+
+
+def test_a_random_search_logs_n_iter_candidates_and_the_run_records_the_winner(
+    jobs, mlflow_store, dataset
+):
+    job = service.submit(jobs, GB_RANDOM)
+    jobs.claim(job.id)
+    spy = ProgressSpy(jobs)
+
+    run_job(spy, job.id, dataset=dataset)
+
+    done = jobs.get(job.id)
+    assert done.status == "completed", done.error
+    assert spy.done == [(1, 3), (2, 3), (3, 3)]
+
+    run = _run(done.mlflow_run_id)
+    assert run.data.tags["tuning_mode"] == "random"
+    assert run.data.params["n_iter"] == "3"
+    children = MlflowClient().search_runs(
+        [run.info.experiment_id], filter_string=f"tags.mlflow.parentRunId = '{run.info.run_id}'"
+    )
+    assert len(children) == 3
+    for child in children:
+        assert 5 <= int(child.data.params["n_estimators"]) <= 15
+        assert 0.05 <= float(child.data.params["learning_rate"]) <= 0.3
+        assert child.data.params["max_depth"] in {"2", "3"}
+        for metric in ("cv_rmse_mean", "cv_rmse_std", "cv_mae_mean", "cv_r2_mean"):
+            assert metric in child.data.metrics
+    # Distinct samples, not one Candidate repeated.
+    assert len({child.data.params["learning_rate"] for child in children}) == 3
+
+    winner = min(children, key=lambda child: child.data.metrics["cv_rmse_mean"])
+    assert run.data.tags["winning_candidate_run_id"] == winner.info.run_id
+    assert run.data.metrics["cv_rmse_mean"] == winner.data.metrics["cv_rmse_mean"]
+    for name in ("n_estimators", "learning_rate", "max_depth"):
+        assert run.data.params[name] == winner.data.params[name]
