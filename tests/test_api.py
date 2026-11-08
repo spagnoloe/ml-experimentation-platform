@@ -15,6 +15,7 @@ from sqlalchemy import text
 from app.api.main import create_app
 from app.ml.schema import FEATURES, SAMPLE_ROWS
 from app.registry.client import RegistryError, VersionMetadata
+from app.registry.model_version import ModelVersionRef
 
 ROW = SAMPLE_ROWS[0]
 
@@ -32,24 +33,28 @@ class FakeRegistry:
     """Serves small, real fitted pipelines by `(model_name, version)`."""
 
     def __init__(self) -> None:
-        self.models: dict[tuple[str, int], tuple[FakeModel, VersionMetadata]] = {}
+        self.models: dict[ModelVersionRef, tuple[FakeModel, VersionMetadata]] = {}
+        # When set, every call raises it, like a registry that is down or misbehaving.
+        self.broken: Exception | None = None
 
     def add(self, name: str, version: int, pipeline, *, input_names=FEATURES, algorithm="lr"):
         names = None if input_names is None else list(input_names)
         metadata = VersionMetadata(run_id=f"run-{name}-{version}", algorithm=algorithm)
-        self.models[(name, version)] = (FakeModel(pipeline, names), metadata)
+        self.models[ModelVersionRef(name, version)] = (FakeModel(pipeline, names), metadata)
 
-    def _get(self, name: str, version: int):
+    def _get(self, ref: ModelVersionRef):
+        if self.broken is not None:
+            raise self.broken
         try:
-            return self.models[(name, version)]
+            return self.models[ref]
         except KeyError:
-            raise RegistryError(f"no Model Version {name}/{version}") from None
+            raise RegistryError(f"no Model Version {ref}") from None
 
-    def load_model(self, name: str, version: int) -> FakeModel:
-        return self._get(name, version)[0]
+    def load_model(self, ref: ModelVersionRef) -> FakeModel:
+        return self._get(ref)[0]
 
-    def get_version_metadata(self, name: str, version: int) -> VersionMetadata:
-        return self._get(name, version)[1]
+    def get_version_metadata(self, ref: ModelVersionRef) -> VersionMetadata:
+        return self._get(ref)[1]
 
 
 def _fitted(scale: float) -> LinearRegression:
@@ -187,13 +192,38 @@ def test_a_model_version_without_a_signature_is_rejected(registry, api):
     assert "signature" in response.json()["detail"]
 
 
-def test_if_the_deployment_cannot_be_written_deploy_returns_500_and_does_not_swap(registry, api):
-    # A valid model whose version overflows the integer column, so the insert itself fails.
-    too_big = 2**31
-    registry.add("california-housing", too_big, _fitted(2.0))
+@pytest.fixture
+def unwritable(engine):
+    """Make Postgres itself reject Deployments of the Registered Model `unwritable`."""
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE FUNCTION reject_unwritable() RETURNS trigger AS $$
+                BEGIN
+                    IF NEW.model_name = 'unwritable' THEN
+                        RAISE EXCEPTION 'insert rejected by test trigger';
+                    END IF;
+                    RETURN NEW;
+                END $$ LANGUAGE plpgsql;
+                CREATE TRIGGER reject_unwritable BEFORE INSERT ON deployments
+                    FOR EACH ROW EXECUTE FUNCTION reject_unwritable();
+                """
+            )
+        )
+    yield "unwritable"
+    with engine.begin() as conn:
+        conn.execute(text("DROP TRIGGER reject_unwritable ON deployments"))
+        conn.execute(text("DROP FUNCTION reject_unwritable()"))
+
+
+def test_if_the_deployment_cannot_be_written_deploy_returns_500_and_does_not_swap(
+    registry, api, unwritable
+):
+    registry.add(unwritable, 1, _fitted(2.0))
     _deploy(api, 1)
 
-    response = _deploy(api, too_big)
+    response = _deploy(api, 1, name=unwritable)
 
     assert response.status_code == 500
     assert [d["model_version"] for d in api.get("/deployments").json()] == [1]
@@ -273,7 +303,7 @@ def test_if_the_latest_deployment_cannot_be_loaded_at_startup_the_api_starts_deg
     registry, start
 ):
     _deploy(start(), 2)
-    del registry.models[("california-housing", 2)]
+    del registry.models[ModelVersionRef("california-housing", 2)]
 
     restarted = start()
 
@@ -298,3 +328,27 @@ def test_each_predict_request_logs_one_structured_line(api, caplog):
     assert lines[0]["model_version"] == 1
     assert lines[0]["rows"] == 3
     assert lines[0]["latency_ms"] >= 0
+
+
+def test_a_version_beyond_what_a_deployment_can_record_is_rejected_with_422(api):
+    assert _deploy(api, 2**31).status_code == 422
+
+
+def test_an_unexpected_registry_error_on_deploy_returns_422_with_the_reason(registry, api):
+    _deploy(api, 1)
+    registry.broken = ConnectionError("registry unreachable")
+
+    response = _deploy(api, 2)
+
+    assert response.status_code == 422
+    assert "registry unreachable" in response.json()["detail"]
+    assert api.post("/v1/predict", json={"rows": [ROW]}).json()["model_version"] == 1
+
+
+def test_if_the_registry_fails_unexpectedly_at_startup_the_api_starts_degraded(registry, start):
+    _deploy(start(), 2)
+    registry.broken = ConnectionError("registry unreachable")
+
+    restarted = start()
+
+    assert restarted.get("/health").json() == {"status": "degraded", "model_loaded": False}

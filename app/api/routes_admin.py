@@ -2,13 +2,13 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.api.model_manager import DeploymentWriteError, ModelManager, ModelValidationError
-from app.api.routes_public import LoadedModelOut
-from app.db.repositories import DeploymentRepository
-from app.settings import get_settings
+from app.api.dependencies import Manager
+from app.api.model_manager import DeploymentWriteError, ModelValidationError
+from app.api.schemas import LoadedModelOut
+from app.registry.model_version import MAX_MODEL_VERSION, ModelVersionRef
 
 router = APIRouter(tags=["admin"])
 
@@ -16,23 +16,7 @@ router = APIRouter(tags=["admin"])
 class DeployRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model_name: str = Field(min_length=1)
-    version: int = Field(ge=1)
-
-
-def _manager(request: Request) -> ModelManager:
-    return request.app.state.manager
-
-
-@router.post("/deploy")
-def deploy(body: DeployRequest, request: Request) -> LoadedModelOut:
-    """Validate a Model Version, record its Deployment, then make it the Active Model."""
-    try:
-        loaded = _manager(request).deploy(body.model_name, body.version)
-    except ModelValidationError as exc:
-        raise HTTPException(422, str(exc)) from exc
-    except DeploymentWriteError as exc:
-        raise HTTPException(500, str(exc)) from exc
-    return LoadedModelOut.of(loaded)
+    version: int = Field(ge=1, le=MAX_MODEL_VERSION)
 
 
 class DeploymentOut(BaseModel):
@@ -43,9 +27,19 @@ class DeploymentOut(BaseModel):
     created_at: datetime
 
 
+@router.post("/deploy")
+def deploy(body: DeployRequest, manager: Manager) -> LoadedModelOut:
+    """Validate a Model Version, record its Deployment, then make it the Active Model."""
+    try:
+        loaded = manager.deploy(ModelVersionRef(body.model_name, body.version))
+    except ModelValidationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except DeploymentWriteError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return LoadedModelOut.of(loaded)
+
+
 @router.get("/deployments")
-def deployments(request: Request, limit: int = Query(50, ge=1, le=500)) -> list[DeploymentOut]:
+def deployments(manager: Manager, limit: int = Query(50, ge=1, le=500)) -> list[DeploymentOut]:
     """Deployments in this environment, newest first."""
-    repository: DeploymentRepository = request.app.state.deployments
-    history = repository.history(get_settings().environment, limit=limit)
-    return [DeploymentOut.model_validate(d, from_attributes=True) for d in history]
+    return [DeploymentOut.model_validate(d, from_attributes=True) for d in manager.history(limit)]

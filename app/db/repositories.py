@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import Engine, func, insert, select, update
 
 from app.db.tables import deployments, training_jobs
+from app.registry.model_version import ModelVersionRef
 
 
 @dataclass(frozen=True)
@@ -117,6 +118,10 @@ class Deployment:
     model_version: int
     created_at: datetime
 
+    @property
+    def ref(self) -> ModelVersionRef:
+        return ModelVersionRef(self.model_name, self.model_version)
+
 
 class DeploymentRepository:
     """Append-only: there is deliberately no update or delete."""
@@ -124,20 +129,21 @@ class DeploymentRepository:
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
-    def append(self, environment: str, model_name: str, model_version: int) -> Deployment:
+    def append(self, environment: str, ref: ModelVersionRef) -> Deployment:
+        values = {
+            "environment": environment,
+            "model_name": ref.model_name,
+            "model_version": ref.model_version,
+        }
         with self._engine.begin() as conn:
-            row = conn.execute(
-                insert(deployments)
-                .values(environment=environment, model_name=model_name, model_version=model_version)
-                .returning(deployments)
-            ).one()
+            row = conn.execute(insert(deployments).values(values).returning(deployments)).one()
         return Deployment(**row._mapping)
 
     def latest(self, environment: str) -> Deployment | None:
         history = self.history(environment, limit=1)
         return history[0] if history else None
 
-    def history(self, environment: str, limit: int = 50) -> list[Deployment]:
+    def history(self, environment: str, limit: int) -> list[Deployment]:
         """Newest first."""
         query = (
             select(deployments)

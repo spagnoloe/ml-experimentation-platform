@@ -3,8 +3,12 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+import mlflow
 import numpy as np
 import pandas as pd
+from mlflow.tracking import MlflowClient
+
+from app.registry.model_version import ModelVersionRef
 
 
 class RegistryError(Exception):
@@ -26,13 +30,13 @@ class RegistryModel(Protocol):
 
 
 class RegistryClient(Protocol):
-    def load_model(self, name: str, version: int) -> RegistryModel: ...
+    def load_model(self, ref: ModelVersionRef) -> RegistryModel: ...
 
-    def get_version_metadata(self, name: str, version: int) -> VersionMetadata: ...
+    def get_version_metadata(self, ref: ModelVersionRef) -> VersionMetadata: ...
 
 
 class _PyfuncModel:
-    def __init__(self, model) -> None:
+    def __init__(self, model: mlflow.pyfunc.PyFuncModel) -> None:
         self._model = model
         schema = model.metadata.get_input_schema()
         self.input_names = None if schema is None else schema.input_names()
@@ -45,23 +49,20 @@ class MlflowRegistryClient:
     """Loads exact Model Versions (`models:/<name>/<version>`), never aliases (ADR-0001)."""
 
     def __init__(self, tracking_uri: str) -> None:
-        import mlflow
-        from mlflow.tracking import MlflowClient
-
-        self._mlflow = mlflow
         self._client = MlflowClient(tracking_uri=tracking_uri, registry_uri=tracking_uri)
         mlflow.set_tracking_uri(tracking_uri)
 
-    def load_model(self, name: str, version: int) -> RegistryModel:
+    def load_model(self, ref: ModelVersionRef) -> RegistryModel:
+        uri = f"models:/{ref.model_name}/{ref.model_version}"
         try:
-            return _PyfuncModel(self._mlflow.pyfunc.load_model(f"models:/{name}/{version}"))
+            return _PyfuncModel(mlflow.pyfunc.load_model(uri))
         except Exception as exc:
-            raise RegistryError(f"cannot load Model Version {name}/{version}: {exc}") from exc
+            raise RegistryError(f"cannot load Model Version {ref}: {exc}") from exc
 
-    def get_version_metadata(self, name: str, version: int) -> VersionMetadata:
+    def get_version_metadata(self, ref: ModelVersionRef) -> VersionMetadata:
         try:
-            run_id = self._client.get_model_version(name, str(version)).run_id
-            algorithm = self._client.get_run(run_id).data.tags.get("algorithm")
+            version = self._client.get_model_version(ref.model_name, str(ref.model_version))
+            algorithm = self._client.get_run(version.run_id).data.tags.get("algorithm")
         except Exception as exc:
-            raise RegistryError(f"cannot read Model Version {name}/{version}: {exc}") from exc
-        return VersionMetadata(run_id=run_id, algorithm=algorithm)
+            raise RegistryError(f"cannot read Model Version {ref}: {exc}") from exc
+        return VersionMetadata(run_id=version.run_id, algorithm=algorithm)

@@ -9,12 +9,16 @@ from sqlalchemy import Engine
 from app.api import routes_admin, routes_public
 from app.api.model_manager import ModelManager
 from app.db.repositories import DeploymentRepository
-from app.registry.client import RegistryClient
+from app.db.session import get_engine
+from app.registry.client import MlflowRegistryClient, RegistryClient
 from app.settings import get_settings
 
 
 def create_app(*, registry: RegistryClient | None = None, engine: Engine | None = None) -> FastAPI:
-    """Build the API. Without arguments it uses MLflow and the `app` database from settings."""
+    """Build the API. Without arguments it uses MLflow and the `app` database from settings.
+
+    Nothing connects until startup, so importing this module (as uvicorn does) is free.
+    """
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -23,20 +27,11 @@ def create_app(*, registry: RegistryClient | None = None, engine: Engine | None 
             level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s"
         )
         settings = get_settings()
-        if registry is None:
-            from app.registry.client import MlflowRegistryClient
-
-            app_registry = MlflowRegistryClient(settings.mlflow_tracking_uri)
-        else:
-            app_registry = registry
-        if engine is None:
-            from app.db.session import get_engine
-
-            app_engine = get_engine()
-        else:
-            app_engine = engine
-        app.state.deployments = DeploymentRepository(app_engine)
-        app.state.manager = ModelManager(app_registry, app.state.deployments, settings.environment)
+        app.state.manager = ModelManager(
+            registry or MlflowRegistryClient(settings.mlflow_tracking_uri),
+            DeploymentRepository(engine or get_engine()),
+            settings.environment,
+        )
         app.state.manager.reconcile()
         yield
 

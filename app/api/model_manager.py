@@ -9,9 +9,10 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.exc import SQLAlchemyError
 
-from app.db.repositories import DeploymentRepository
+from app.db.repositories import Deployment, DeploymentRepository
 from app.ml.schema import FEATURES, SAMPLE_ROWS
-from app.registry.client import RegistryClient, RegistryError, RegistryModel
+from app.registry.client import RegistryClient, RegistryModel
+from app.registry.model_version import ModelVersionRef
 
 log = logging.getLogger(__name__)
 
@@ -26,12 +27,22 @@ class DeploymentWriteError(Exception):
 
 @dataclass(frozen=True)
 class LoadedModel:
-    model: RegistryModel
-    model_name: str
-    model_version: int
+    predictor: RegistryModel
+    ref: ModelVersionRef
     run_id: str
     algorithm: str | None
     loaded_at: datetime
+
+
+@dataclass(frozen=True)
+class ModelStatus:
+    loaded: LoadedModel | None
+    # The Model Version the latest Deployment names: what should be loaded.
+    desired: ModelVersionRef | None
+
+    @property
+    def in_sync(self) -> bool:
+        return self.loaded is not None and self.loaded.ref == self.desired
 
 
 class ModelManager:
@@ -41,89 +52,99 @@ class ModelManager:
         self._registry = registry
         self._deployments = deployments
         self._environment = environment
-        self._current: LoadedModel | None = None
-        self._lock = threading.Lock()
+        self._active: LoadedModel | None = None
+        # Reentrant, so deploy and reconcile can hold it across load, record and swap.
+        self._lock = threading.RLock()
 
     def current(self) -> LoadedModel | None:
-        return self._current
+        """The loaded Active Model. Read it once per request: a swap may happen at any time."""
+        return self._active
 
-    def load_and_validate(self, name: str, version: int) -> LoadedModel:
+    def status(self) -> ModelStatus:
+        latest = self._deployments.latest(self._environment)
+        return ModelStatus(loaded=self._active, desired=None if latest is None else latest.ref)
+
+    def history(self, limit: int) -> list[Deployment]:
+        """This environment's Deployments, newest first."""
+        return self._deployments.history(self._environment, limit)
+
+    def load_and_validate(self, ref: ModelVersionRef) -> LoadedModel:
         """Load a Model Version and check it against the schema. Changes nothing."""
         try:
-            model = self._registry.load_model(name, version)
-            metadata = self._registry.get_version_metadata(name, version)
-        except RegistryError as exc:
+            predictor = self._registry.load_model(ref)
+            metadata = self._registry.get_version_metadata(ref)
+        except Exception as exc:
+            # Whatever the registry raises, the deploy is refused with its reason.
             raise ModelValidationError(str(exc)) from exc
-        _validate(model, f"{name}/{version}")
+        _validate(predictor, ref)
         return LoadedModel(
-            model=model,
-            model_name=name,
-            model_version=version,
+            predictor=predictor,
+            ref=ref,
             run_id=metadata.run_id,
             algorithm=metadata.algorithm,
             loaded_at=datetime.now(UTC),
         )
 
     def swap(self, loaded: LoadedModel) -> None:
-        self._current = loaded
+        with self._lock:
+            self._active = loaded
 
     def reconcile(self) -> LoadedModel | None:
-        """Load the latest Deployment's Model Version, writing nothing. None leaves no model."""
+        """Load the latest Deployment's Model Version, writing nothing.
+
+        Any failure leaves the API running without an Active Model (degraded), not crashed.
+        """
         with self._lock:
-            latest = self._deployments.latest(self._environment)
-            if latest is None:
-                log.warning("no Deployment in %s; starting without a model", self._environment)
-                return None
             try:
-                loaded = self.load_and_validate(latest.model_name, latest.model_version)
-            except ModelValidationError:
-                log.exception(
-                    "cannot load the Active Model %s/%s; starting without a model",
-                    latest.model_name,
-                    latest.model_version,
-                )
+                latest = self._deployments.latest(self._environment)
+                if latest is None:
+                    log.warning("no Deployment in %s; starting degraded", self._environment)
+                    return None
+                loaded = self.load_and_validate(latest.ref)
+            except Exception:
+                log.exception("cannot load the Active Model; starting degraded")
                 return None
             self.swap(loaded)
-            log.info("serving %s/%s", loaded.model_name, loaded.model_version)
+            log.info("serving %s", loaded.ref)
             return loaded
 
-    def deploy(self, name: str, version: int) -> LoadedModel:
+    def deploy(self, ref: ModelVersionRef) -> LoadedModel:
+        """Validate, record the Deployment, then swap. Writes nothing if `ref` is loaded."""
         with self._lock:
-            current = self._current
-            if current and (current.model_name, current.model_version) == (name, version):
-                return current
-            loaded = self.load_and_validate(name, version)
-            # Record first, then swap: a model is never served without its Deployment.
+            if self._active is not None and self._active.ref == ref:
+                return self._active
+            loaded = self.load_and_validate(ref)
+            # Record first, then swap: a Model Version is never served without its Deployment.
             try:
-                self._deployments.append(self._environment, name, version)
+                self._deployments.append(self._environment, ref)
             except SQLAlchemyError as exc:
-                log.exception("could not record the Deployment of %s/%s", name, version)
+                log.exception("could not record the Deployment of %s", ref)
                 raise DeploymentWriteError(
-                    f"could not record the Deployment of {name}/{version}; nothing was switched"
+                    f"could not record the Deployment of {ref}; nothing was switched"
                 ) from exc
             self.swap(loaded)
             return loaded
 
 
-def _validate(model: RegistryModel, label: str) -> None:
-    if model.input_names != list(FEATURES):
+def _validate(predictor: RegistryModel, ref: ModelVersionRef) -> None:
+    if predictor.input_names != list(FEATURES):
         raise ModelValidationError(
-            f"Model Version {label}: signature columns {model.input_names} "
+            f"Model Version {ref}: signature columns {predictor.input_names} "
             f"do not equal the schema's features {list(FEATURES)}"
         )
     sample = pd.DataFrame(SAMPLE_ROWS, columns=list(FEATURES))
     try:
-        predictions = np.asarray(model.predict(sample), dtype="float64")
+        predictions = np.asarray(predictor.predict(sample), dtype="float64")
     except Exception as exc:
         raise ModelValidationError(
-            f"Model Version {label}: predicting the sample rows failed: {exc}"
+            f"Model Version {ref}: predicting the sample rows failed: {exc}"
         ) from exc
     if predictions.shape != (len(sample),):
         raise ModelValidationError(
-            f"Model Version {label}: predictions have shape {predictions.shape}, "
+            f"Model Version {ref}: predictions have shape {predictions.shape}, "
             f"expected ({len(sample)},)"
         )
     if not np.isfinite(predictions).all():
         raise ModelValidationError(
-            f"Model Version {label}: predictions on the sample rows are not all finite"
+            f"Model Version {ref}: predictions on the sample rows are not all finite"
         )

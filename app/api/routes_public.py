@@ -3,14 +3,13 @@
 import json
 import logging
 import time
-from datetime import datetime
 
 import pandas as pd
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
-from app.api.model_manager import LoadedModel, ModelManager
-from app.db.repositories import DeploymentRepository
+from app.api.dependencies import Manager
+from app.api.schemas import LoadedModelOut, ModelVersionOut
 from app.ml.schema import FEATURES, TARGET_UNIT
 from app.settings import get_settings
 
@@ -37,24 +36,9 @@ class PredictResponse(BaseModel):
     model_version: int
 
 
-class ModelVersionRef(BaseModel):
-    model_name: str
-    model_version: int
-
-
-class LoadedModelOut(ModelVersionRef):
-    run_id: str
-    algorithm: str | None
-    loaded_at: datetime
-
-    @classmethod
-    def of(cls, loaded: LoadedModel) -> "LoadedModelOut":
-        return cls.model_validate(loaded, from_attributes=True)
-
-
-class ModelStatus(BaseModel):
+class ModelStatusOut(BaseModel):
     loaded: LoadedModelOut | None
-    desired: ModelVersionRef | None
+    desired: ModelVersionOut | None
     in_sync: bool
 
 
@@ -63,54 +47,38 @@ class Health(BaseModel):
     model_loaded: bool
 
 
-def _manager(request: Request) -> ModelManager:
-    return request.app.state.manager
-
-
 @router.get("/health")
-def health(request: Request) -> Health:
-    loaded = _manager(request).current() is not None
+def health(manager: Manager) -> Health:
+    loaded = manager.current() is not None
     return Health(status="ok" if loaded else "degraded", model_loaded=loaded)
 
 
 @router.get("/v1/model")
-def model(request: Request) -> ModelStatus:
-    """The loaded model, the Model Version the latest Deployment names, and whether they agree."""
-    loaded = _manager(request).current()
-    repository: DeploymentRepository = request.app.state.deployments
-    latest = repository.latest(get_settings().environment)
-    desired = (
-        None
-        if latest is None
-        else ModelVersionRef(model_name=latest.model_name, model_version=latest.model_version)
-    )
-    in_sync = (
-        loaded is not None
-        and desired is not None
-        and (loaded.model_name, loaded.model_version) == (desired.model_name, desired.model_version)
-    )
-    return ModelStatus(
-        loaded=None if loaded is None else LoadedModelOut.of(loaded),
-        desired=desired,
-        in_sync=in_sync,
+def model_status(manager: Manager) -> ModelStatusOut:
+    """The loaded Model Version, the one the latest Deployment names, and whether they agree."""
+    status = manager.status()
+    return ModelStatusOut(
+        loaded=None if status.loaded is None else LoadedModelOut.of(status.loaded),
+        desired=None if status.desired is None else ModelVersionOut.of(status.desired),
+        in_sync=status.in_sync,
     )
 
 
 @router.post("/v1/predict")
-def predict(body: PredictRequest, request: Request) -> PredictResponse:
+def predict(body: PredictRequest, manager: Manager) -> PredictResponse:
     started = time.perf_counter()
-    # Read the model reference once, so a concurrent swap cannot mix Model Versions.
-    loaded = _manager(request).current()
+    # Read the reference once, so a concurrent swap cannot mix Model Versions in one response.
+    loaded = manager.current()
     if loaded is None:
-        raise HTTPException(503, "no model loaded")
+        raise HTTPException(503, "no Model Version loaded")
     frame = pd.DataFrame([row.model_dump() for row in body.rows], columns=list(FEATURES))
-    predictions = loaded.model.predict(frame)
+    predictions = loaded.predictor.predict(frame)
     log.info(
         json.dumps(
             {
                 "event": "predict",
-                "model_name": loaded.model_name,
-                "model_version": loaded.model_version,
+                "model_name": loaded.ref.model_name,
+                "model_version": loaded.ref.model_version,
                 "rows": len(frame),
                 "latency_ms": round((time.perf_counter() - started) * 1000, 2),
             }
@@ -119,6 +87,6 @@ def predict(body: PredictRequest, request: Request) -> PredictResponse:
     return PredictResponse(
         predictions=[float(p) for p in predictions],
         unit=TARGET_UNIT,
-        model_name=loaded.model_name,
-        model_version=loaded.model_version,
+        model_name=loaded.ref.model_name,
+        model_version=loaded.ref.model_version,
     )
