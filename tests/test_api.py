@@ -12,6 +12,7 @@ from sklearn.compose import TransformedTargetRegressor
 from sklearn.linear_model import LinearRegression
 from sqlalchemy import text
 
+from app.api.client import ApiClient, ApiError
 from app.api.main import create_app
 from app.ml.schema import FEATURES, SAMPLE_ROWS
 from app.registry.client import RegistryError, VersionMetadata
@@ -352,3 +353,69 @@ def test_if_the_registry_fails_unexpectedly_at_startup_the_api_starts_degraded(r
     restarted = start()
 
     assert restarted.get("/health").json() == {"status": "degraded", "model_loaded": False}
+
+
+# The client the Deployments page uses, over the same app ----------------------------------
+
+
+def test_through_the_client_deploying_switches_the_active_model_and_adds_to_the_history(api):
+    client = ApiClient(api)
+    client.deploy(ModelVersionRef("california-housing", 1))
+
+    loaded = client.deploy(ModelVersionRef("california-housing", 2))
+
+    assert (loaded.model_version, loaded.algorithm) == (2, "rf")
+    status = client.model_status()
+    assert status.in_sync is True
+    assert status.loaded.model_version == 2
+    assert [d.model_version for d in client.deployments()] == [2, 1]
+
+
+def test_through_the_client_a_failed_deploy_raises_the_apis_reason_and_changes_nothing(api):
+    client = ApiClient(api)
+    client.deploy(ModelVersionRef("california-housing", 1))
+
+    with pytest.raises(ApiError) as raised:
+        client.deploy(ModelVersionRef("california-housing", 3))
+
+    assert raised.value.status_code == 422
+    assert "signature" in raised.value.reason
+    assert client.model_status().loaded.model_version == 1
+    assert [d.model_version for d in client.deployments()] == [1]
+
+
+def test_through_the_client_a_prediction_names_the_model_version_that_answered(api):
+    client = ApiClient(api)
+    client.deploy(ModelVersionRef("california-housing", 2))
+
+    answer = client.predict([ROW])
+
+    assert (answer.model_name, answer.model_version) == ("california-housing", 2)
+    assert answer.predictions == pytest.approx([2 * ROW["MedInc"]])
+    assert answer.unit == "100k USD"
+
+
+def test_through_the_client_predicting_with_no_active_model_raises_503_with_the_reason(api):
+    with pytest.raises(ApiError) as raised:
+        ApiClient(api).predict([ROW])
+
+    assert (raised.value.status_code, raised.value.reason) == (503, "no Model Version loaded")
+
+
+def test_an_unreachable_api_raises_an_error_without_a_status_code():
+    client = ApiClient.at("http://127.0.0.1:9")
+
+    with pytest.raises(ApiError) as raised:
+        client.model_status()
+
+    assert raised.value.status_code is None
+    assert "cannot reach the API" in raised.value.reason
+
+
+def test_through_the_client_a_rejected_request_body_gives_a_readable_reason(api):
+    with pytest.raises(ApiError) as raised:
+        ApiClient(api).deploy(ModelVersionRef("", 1))
+
+    assert raised.value.status_code == 422
+    assert raised.value.reason.startswith("body.model_name: ")
+    assert "[{" not in raised.value.reason

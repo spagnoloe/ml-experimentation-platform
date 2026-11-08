@@ -5,7 +5,7 @@ import pytest
 from mlflow.tracking import MlflowClient
 
 from app.settings import get_settings
-from app.tracking.runs import leaderboard, run_details, run_url
+from app.tracking.runs import best_run, leaderboard, run_details, run_url
 
 # The evaluation protocol the runner logs on every Run, as in the default settings.
 PROTOCOL = {"split_seed": 42, "test_size": 0.2, "cv_folds": 5, "cv_seed": 42}
@@ -153,3 +153,11 @@ def test_run_details_hold_every_metric_and_param_and_the_platforms_own_tags(data
     assert details.params["cv_folds"] == "5"
     assert details.tags["config_name"] == "detailed"
     assert not any(tag.startswith("mlflow.") for tag in details.tags)
+
+
+def test_the_best_run_is_the_completed_run_with_the_lowest_mean_cv_rmse(dataset_sha256):
+    assert best_run(MlflowClient(), dataset_sha256) is None
+    _log_run(dataset_sha256, name="worse", cv_rmse=0.6)
+    best = _log_run(dataset_sha256, name="best", cv_rmse=0.45)
+
+    assert best_run(MlflowClient(), dataset_sha256).run_id == best

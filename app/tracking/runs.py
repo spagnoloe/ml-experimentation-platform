@@ -64,6 +64,12 @@ def leaderboard(client: MlflowClient, dataset_sha256: str) -> list[LeaderboardRo
     return [_row(run, is_best=rank == 0) for rank, run in enumerate(runs)]
 
 
+def best_run(client: MlflowClient, dataset_sha256: str) -> LeaderboardRow | None:
+    """The Best Run on the Dataset with this hash, or None before any Run has completed."""
+    rows = leaderboard(client, dataset_sha256)
+    return rows[0] if rows else None
+
+
 def _row(run: Run, *, is_best: bool) -> LeaderboardRow:
     metrics = run.data.metrics
     algorithm = run.data.tags.get("algorithm", "")

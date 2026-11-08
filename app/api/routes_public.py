@@ -29,11 +29,9 @@ class PredictRequest(BaseModel):
     rows: list[Row] = Field(min_length=1, max_length=get_settings().max_predict_rows)
 
 
-class PredictResponse(BaseModel):
+class PredictResponse(ModelVersionOut):
     predictions: list[float]
     unit: str
-    model_name: str
-    model_version: int
 
 
 class ModelStatusOut(BaseModel):

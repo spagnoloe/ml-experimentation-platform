@@ -12,6 +12,10 @@ class ModelVersionOut(BaseModel):
     model_name: str
     model_version: int
 
+    @property
+    def ref(self) -> ModelVersionRef:
+        return ModelVersionRef(self.model_name, self.model_version)
+
     @classmethod
     def of(cls, ref: ModelVersionRef) -> "ModelVersionOut":
         return cls(model_name=ref.model_name, model_version=ref.model_version)
