@@ -114,17 +114,23 @@ sequenceDiagram
   CP->>R: Poll GET /v1/model on every replica
   R-->>CP: loaded v7, desired v7, in_sync true
   R->>CW: Prediction metrics labelled with model_version
-  CW-->>CP: Health alarm - v7 error rate or latency over threshold
+  CW-->>CP: Alarm on v7
   Note over CP: Rollback is a new Deployment of the previous Model Version, never an edit
-  CP->>CP: Automatic rollback by policy - first rollback of this rollout, target v6 served just before v7
+  alt Health alarm - v7 error rate or latency over threshold, or in_sync false at rollout timeout
+    CP->>CP: Rollback approved by policy - first automatic rollback of this rollout, v6 served just before v7
+  else Drift alarm, or an automatic rollback already ran in this rollout
+    CP->>AP: Decision request - roll back to v6 or retrain
+    AP-->>CP: Roll back to v6
+    Note over AP: Choosing retrain ends the flow here and v7 keeps serving
+  end
   CP->>MLF: Load v6
   CP->>CP: load_and_validate, no gate for a Model Version that already served
-  CP->>DB: Append Deployment v6, reason rollback of v7, approved_by policy and alarm name
+  CP->>DB: Append Deployment v6, reason rollback of v7, approved_by the policy and alarm or the person
   CP->>EB: Publish deployment.created
   EB->>R: Reconcile now
   R->>DB: latest Deployment is v6
   R->>MLF: Load v6
-  R->>R: load_and_validate, then swap
+  R->>R: load_and_validate, then swap under the lock
   R-->>CP: in_sync true on every replica
   CP->>CP: Audit record: rollout and rollback complete
 ```
