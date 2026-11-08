@@ -344,7 +344,7 @@ The private repo contains the code, a README, an AWS production architecture doc
 | Tracking and registry | MLflow server on Postgres | Amazon SageMaker managed MLflow, or self-hosted MLflow on ECS backed by RDS |
 | Artifacts | Volume behind MLflow's artifact proxy | S3 with versioning and KMS encryption, sha256 checked at load |
 | Training | One worker polling `training_jobs` | SQS-queued jobs run as SageMaker Training Jobs or EKS Jobs, with resource limits and autoscaling |
-| Serving | One uvicorn process; reconcile at startup | N replicas on EKS or ECS behind an ALB, each reconciling on an EventBridge/SNS deploy event plus a periodic check; rolling or canary rollout |
+| Serving | One uvicorn process; reconcile at startup | N replicas on EKS or ECS behind an ALB, each reconciling when the control plane calls an internal reconcile endpoint, plus a periodic check; rolling or canary rollout |
 | Deploy control | `/deploy` on the serving API | A separate control-plane service with IAM-based authorization, approval, audit, and rollback |
 | Auth | None | IAM Identity Center SSO for the UI; API Gateway with API keys or Cognito OAuth for consumers; admin routes internal only |
 | Input validation | Types only | Plausible ranges and schema drift checks |

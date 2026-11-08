@@ -13,7 +13,7 @@ Vocabulary follows [GLOSSARY.md](../GLOSSARY.md).
 | Built in the proof of concept | Production |
 | --- | --- |
 | `ModelManager.load_and_validate` (signature equals the schema's 8 features, finite predictions of shape `(n,)` on the sample rows) | Unchanged. Replicas run it on every reconcile. The control plane runs the same check before it writes a Deployment. |
-| `ModelManager.reconcile`, at startup only | Unchanged code, called on three triggers: startup, a deploy event, and a periodic check. A failed reconcile keeps the loaded Model Version and reports `in_sync: false`. |
+| `ModelManager.reconcile`, at startup only | Unchanged code, called on three triggers: startup, a reconcile call from the control plane after it writes a Deployment, and a periodic check. A failed reconcile keeps the loaded Model Version and reports `in_sync: false`. |
 | `ModelManager.deploy` and `POST /deploy` | Moved to the control plane, with authorization, approval and audit. Replicas no longer mount the admin router. |
 | `DeploymentRepository` (`latest`, `append`, `history`) and the `deployments` table | Same table and same append-only rule, in RDS. The control plane is the only role with `INSERT`. Replicas get a read-only role. Production adds `actor`, `reason` and `approved_by` columns through a migration. |
 | `ApiClient` (`app/api/client.py`), used by the UI and `seed` | Split in two: admin calls (`deploy`, `deployments`) go to the control plane, consumer calls (`model_status`, `predict`) go to the serving API through API Gateway. |
@@ -48,7 +48,6 @@ flowchart LR
       MLF["MLflow<br/>SageMaker managed or ECS"]
     end
     SQS[["SQS training queue"]]
-    EB(["EventBridge<br/>deploy events"])
     S3A[("S3 artifacts<br/>versioned, KMS")]
     S3D[("S3 datasets<br/>versioned")]
     S3P[("S3 prediction logs")]
@@ -70,8 +69,7 @@ flowchart LR
   MLF --> S3A
   CP -->|validate| MLF
   CP -->|append Deployment| RDS
-  CP -->|publish| EB
-  EB -->|reconcile now| SERVE
+  CP -->|reconcile now| SERVE
   SERVE -->|read latest Deployment| RDS
   SERVE -->|load Model Version| MLF
   SERVE -->|structured logs, metrics, traces| CW
@@ -95,7 +93,6 @@ sequenceDiagram
   actor AP as Approver
   participant MLF as MLflow registry
   participant DB as RDS deployments
-  participant EB as EventBridge
   participant R as Serving replicas
   participant CW as CloudWatch
 
@@ -106,8 +103,7 @@ sequenceDiagram
   CP->>AP: Approval request, prod only
   AP-->>CP: Approve
   CP->>DB: Append Deployment v7 with actor, reason, approved_by
-  CP->>EB: Publish deployment.created
-  EB->>R: Reconcile now
+  CP->>R: POST /internal/reconcile on every replica
   R->>DB: latest Deployment is v7
   R->>MLF: Load v7
   R->>R: load_and_validate, then swap under the lock
@@ -126,8 +122,7 @@ sequenceDiagram
   CP->>MLF: Load v6
   CP->>CP: load_and_validate, no gate for a Model Version that already served
   CP->>DB: Append Deployment v6, reason rollback of v7, approved_by the policy and alarm or the person
-  CP->>EB: Publish deployment.created
-  EB->>R: Reconcile now
+  CP->>R: POST /internal/reconcile on every replica
   R->>DB: latest Deployment is v6
   R->>MLF: Load v6
   R->>R: load_and_validate, then swap under the lock
@@ -145,7 +140,7 @@ How this behaves on failure:
 
 - **Validation fails in the control plane:** nothing is written and the Active Model keeps serving, the same as `/deploy` returning 422 today.
 - **A replica cannot load or validate the new version:** that replica keeps serving its loaded Model Version and reports `in_sync: false` on `/v1/model`. The control plane does not report the rollout complete, and it alarms after a timeout. Because the Deployment is already recorded, the remedy is another Deployment, usually of the previous Model Version.
-- **A replica misses the event:** every 60 seconds each replica compares its loaded Model Version with the latest Deployment (the `status()` behind `/v1/model`) and calls `reconcile()` when they differ, so a missed or duplicated event only delays convergence. Startup still reconciles before the replica passes its readiness check.
+- **A replica misses the reconcile call:** every 60 seconds each replica compares its loaded Model Version with the latest Deployment (the `status()` behind `/v1/model`) and calls `reconcile()` when they differ, so a failed, missed or repeated call only delays convergence. Startup still reconciles before the replica passes its readiness check.
 - **Mixed versions during a rollout:** each request reads the model reference once, so a response never mixes versions, and every response names its version. For a gradual rollout, the control plane can deploy to a canary target group first. The design keeps Deployments per environment, so a canary is a short-lived environment such as `prod-canary` with its own Deployment rows, not a second pointer.
 
 ## Mapping from the proof of concept to AWS
@@ -158,7 +153,7 @@ Every component of the proof of concept has a named counterpart.
 | Tracking and registry | `mlflow` server container on the `mlflow` database | Amazon SageMaker managed MLflow, or MLflow on ECS backed by RDS. Each environment account has its own MLflow, holding the one `california-housing` Experiment (ADR-0002). |
 | Artifacts | `mlflowartifacts` volume behind MLflow's artifact proxy (`--serve-artifacts`) | S3 with versioning and KMS encryption, and the artifact's sha256 checked at load. On MLflow on ECS this is one server flag, `--artifacts-destination=s3://…` (ADR-0002). SageMaker managed MLflow stores artifacts in an S3 bucket you configure. |
 | Training | One `worker` polling `training_jobs` (ADR-0003) | SQS plus SageMaker Training Jobs or EKS Jobs, with resource limits, autoscaling and concurrent jobs. A dead-letter queue and a job timeout replace the restart-time orphan sweep. |
-| Serving | One uvicorn process (`api`), reconcile at startup only | EKS or ECS replicas behind an ALB. Each replica reconciles on EventBridge deploy events, plus a periodic check, plus at startup. Liveness uses `/health`, which answers even while degraded, so a fresh environment with no Deployment still starts. The control plane uses `/v1/model` `in_sync` to confirm a rollout. |
+| Serving | One uvicorn process (`api`), reconcile at startup only | EKS or ECS replicas behind an ALB. Each replica reconciles when the control plane calls `POST /internal/reconcile` after writing a Deployment, plus a periodic check, plus at startup. The control plane finds replicas the same way it polls them for `in_sync`, through ECS service discovery or a headless Kubernetes Service. `/internal/reconcile` takes no input and only makes the replica re-read the latest Deployment, so it cannot change what is served. It listens on a separate internal port that only the control plane's security group can reach, and it is not routed through API Gateway or the ALB. Liveness uses `/health`, which answers even while degraded, so a fresh environment with no Deployment still starts. The control plane uses `/v1/model` `in_sync` to confirm a rollout. |
 | Deploy control | `POST /deploy` and `GET /deployments` on the serving API | A separate control-plane service with IAM authorization, approval for prod deploys, audit, and rollback as a new Deployment, automatic on health alarms. It is the only writer of `deployments`. |
 | Auth | None | IAM Identity Center SSO for the UI. API Gateway with API keys and usage plans, or Cognito OAuth, for consumers. Admin routes are internal only and are not mounted on replicas. Workloads use IAM roles (IRSA or ECS task roles), not static keys. |
 | UI | Streamlit `ui` container, or `make ui` on the host | Streamlit on ECS behind an internal ALB with SSO. It calls the control plane instead of `/deploy`. |
