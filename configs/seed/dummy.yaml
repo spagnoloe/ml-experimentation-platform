@@ -1,0 +1,10 @@
+# Seed config: submitted by `make seed`. The mean-predictor baseline every model should beat.
+name: seed-dummy
+algorithm: dummy
+features:
+  bedrooms_per_room: false
+target_transform: none
+tuning:
+  mode: fixed
+  params: {}
+random_state: 42

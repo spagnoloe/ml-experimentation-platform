@@ -70,6 +70,17 @@ def best_run(client: MlflowClient, dataset_sha256: str) -> LeaderboardRow | None
     return rows[0] if rows else None
 
 
+BASELINE_ALGORITHM = "dummy"
+
+
+def baseline(rows: list[LeaderboardRow]) -> LeaderboardRow | None:
+    """The best dummy Run among these ranked Leaderboard rows, or None without one.
+
+    It is the reference every model should beat; it is ranked like any other Run.
+    """
+    return next((row for row in rows if row.algorithm == BASELINE_ALGORITHM), None)
+
+
 def _row(run: Run, *, is_best: bool) -> LeaderboardRow:
     metrics = run.data.metrics
     algorithm = run.data.tags.get("algorithm", "")

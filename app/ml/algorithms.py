@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from sklearn.base import RegressorMixin
+from sklearn.dummy import DummyRegressor
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 
@@ -20,12 +21,16 @@ class Algorithm:
     # the UI and YAML as-is. Capped so a default random search (10 Candidates) takes ~30-60 s.
     # Empty means the algorithm only runs with fixed hyperparameters.
     search_space: dict[str, Any] = field(default_factory=dict)
+    # False for the baseline: it runs with its defaults, in fixed mode only.
+    takes_params: bool = True
 
     def param_names(self) -> set[str]:
         return set(self.make_estimator().get_params(deep=False))
 
 
 ALGORITHMS: dict[str, Algorithm] = {
+    # The baseline: always predicts the mean of the training target.
+    "dummy": Algorithm(DummyRegressor, scale_features=False, takes_params=False),
     "linear_regression": Algorithm(LinearRegression, scale_features=True),
     "random_forest": Algorithm(
         RandomForestRegressor,

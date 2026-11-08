@@ -5,7 +5,7 @@ import pytest
 from mlflow.tracking import MlflowClient
 
 from app.settings import get_settings
-from app.tracking.runs import best_run, leaderboard, run_details, run_url
+from app.tracking.runs import baseline, best_run, leaderboard, run_details, run_url
 
 # The evaluation protocol the runner logs on every Run, as in the default settings.
 PROTOCOL = {"split_seed": 42, "test_size": 0.2, "cv_folds": 5, "cv_seed": 42}
@@ -161,3 +161,17 @@ def test_the_best_run_is_the_completed_run_with_the_lowest_mean_cv_rmse(dataset_
     best = _log_run(dataset_sha256, name="best", cv_rmse=0.45)
 
     assert best_run(MlflowClient(), dataset_sha256).run_id == best
+
+
+def test_the_baseline_is_the_best_dummy_run_and_absent_without_one(dataset_sha256):
+    _log_run(dataset_sha256, name="forest", cv_rmse=0.5)
+    assert baseline(leaderboard(MlflowClient(), dataset_sha256)) is None
+
+    _log_run(dataset_sha256, name="dummy-log1p", cv_rmse=1.2, algorithm="dummy")
+    _log_run(dataset_sha256, name="dummy-mean", cv_rmse=1.15, algorithm="dummy")
+
+    rows = leaderboard(MlflowClient(), dataset_sha256)
+    assert baseline(rows).config_name == "dummy-mean"
+    assert baseline(rows).cv_rmse_mean == 1.15
+    # The baseline is ranked like any other Run; it is just a reference point.
+    assert [row.config_name for row in rows] == ["forest", "dummy-mean", "dummy-log1p"]
