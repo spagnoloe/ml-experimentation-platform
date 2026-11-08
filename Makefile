@@ -1,4 +1,4 @@
-.PHONY: install lint format test db up down logs image train ui
+.PHONY: install lint format test db up down logs image train seed ui
 
 # Recorded on every Run by the worker image.
 export GIT_SHA := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
@@ -38,6 +38,11 @@ image:
 train:
 	@test -n "$(CONFIG)" || (echo "usage: make train CONFIG=configs/rf-fixed.yaml" && exit 2)
 	uv run python -m app.cli submit $(CONFIG) --wait
+
+# Run once after the first `make up`: trains, registers and deploys one Run per
+# configs/seed/*.yaml through the real code path. Re-running adds Runs; it resets nothing.
+seed:
+	uv run python -m app.cli seed
 
 # Run the UI on the host against the Compose stack (`make up`), at http://localhost:8501.
 ui:

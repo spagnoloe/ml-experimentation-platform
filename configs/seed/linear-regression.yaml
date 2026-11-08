@@ -1,0 +1,10 @@
+# Seed config: submitted by `make seed`, one per algorithm. Fixed hyperparameters keep seed fast.
+name: seed-linear-regression
+algorithm: linear_regression
+features:
+  bedrooms_per_room: true
+target_transform: none
+tuning:
+  mode: fixed
+  params: {}
+random_state: 42

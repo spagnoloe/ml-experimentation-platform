@@ -1,4 +1,4 @@
-"""Command line for data scientists: `python -m app.cli submit CONFIG.yaml [--wait]`."""
+"""Command line: `python -m app.cli submit CONFIG.yaml [--wait]` and `python -m app.cli seed`."""
 
 import argparse
 import sys
@@ -47,6 +47,18 @@ def _submit(args: argparse.Namespace) -> int:
     return 0 if job.status == "completed" else 1
 
 
+def _seed(args: argparse.Namespace) -> int:
+    # Imported here, so `submit` does not pay for the registry and HTTP clients.
+    from app.seed import SeedError, seed
+
+    try:
+        seed()
+    except SeedError as exc:
+        print(f"seed failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -54,6 +66,10 @@ def main(argv: list[str] | None = None) -> int:
     submit.add_argument("config", help="path to an Experiment Config YAML file")
     submit.add_argument("--wait", action="store_true", help="block until the job finishes")
     submit.set_defaults(handler=_submit)
+    seed = commands.add_parser(
+        "seed", help="train, register and deploy one Run per seed config (needs `make up`)"
+    )
+    seed.set_defaults(handler=_seed)
 
     args = parser.parse_args(argv)
     return args.handler(args)

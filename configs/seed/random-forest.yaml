@@ -1,0 +1,13 @@
+# Seed config: submitted by `make seed`, one per algorithm. Fixed hyperparameters keep seed fast.
+name: seed-random-forest
+algorithm: random_forest
+features:
+  bedrooms_per_room: true
+target_transform: log1p
+tuning:
+  mode: fixed
+  params:
+    n_estimators: 100
+    max_depth: 12
+    min_samples_leaf: 2
+random_state: 42
