@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Where a browser reaches the MLflow UI; in Compose this differs from the tracking URI.
     mlflow_ui_url: str = "http://localhost:5001"
     mlflow_experiment: str = "california-housing"
-    # The Registered Model that seed registers into and the UI offers by default.
+    # The Registered Model that seed registers every seeded Run into.
     registered_model: str = "california-housing"
     api_url: str = "http://localhost:8000"
     # The Deployments environment this API serves; only one exists in the proof of concept.

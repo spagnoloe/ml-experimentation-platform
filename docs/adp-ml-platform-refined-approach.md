@@ -171,7 +171,7 @@ Training Jobs are rows in `training_jobs`. One worker process runs them one at a
 MLflow's registry holds Registered Models and their auto-incremented Model Versions. Our code adds only the Leaderboard and the rule that defines the Best Run.
 
 - **Registering and deploying are separate actions.** Registering makes a Run available for deployment as a new Model Version, and never changes what is served. Deploying is a later, explicit action on the Deployments page (section 9).
-- **Register:** from a completed Run on the Leaderboard, the user picks a Registered Model name (default `california-housing`, free text allowed). The UI calls `mlflow.register_model("runs:/<run_id>/model", name)`, and MLflow assigns the next version.
+- **Register:** from a completed Run on the Leaderboard, the user picks a Registered Model name (default `california-housing`, free text allowed). Registering goes through the registry client, which registers the Run's logged model (`models:/<model_id>`; MLflow 3 no longer stores it under `runs:/<run_id>/model`), and MLflow assigns the next version.
 - **Version tags:** `job_id`, `algorithm`, `cv_rmse_mean`, `cv_rmse_std`, `test_rmse` and `dataset_sha256`, so the Registry page needs no extra lookups.
 - **One Model Version per Run and name:** the Register button is disabled for a Run that is already registered under that name.
 - **No aliases.** MLflow aliases are deliberately not used. The Active Model is defined only by Deployments (ADR-0001).

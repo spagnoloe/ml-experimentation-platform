@@ -5,8 +5,8 @@ registers each Run as a Model Version, and deploys the Best Run through `POST /d
 Running it again adds new Runs and Model Versions; it never resets anything.
 """
 
-from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import httpx
 import yaml
@@ -19,48 +19,52 @@ from app.db.session import get_engine
 from app.jobs import service
 from app.jobs.config import ConfigError, ExperimentConfig, parse_config
 from app.ml.schema import SAMPLE_ROWS
-from app.registry.client import MlflowRegistryClient
+from app.registry.client import MlflowRegistryClient, RegistryError
 from app.registry.model_version import ModelVersionRef
-from app.settings import get_settings
+from app.settings import Settings, get_settings
 from app.tracking.runs import leaderboard
 
 SEED_CONFIGS = Path(__file__).resolve().parent.parent / "configs" / "seed"
 # Per job; seed jobs take seconds, so hitting this means the worker is not picking them up.
 JOB_TIMEOUT_SECONDS = 300
 HTTP_TIMEOUT_SECONDS = 60
+_NOT_RUNNING_HINT = "is the stack running? Start it with `make up`"
 
 
 class SeedError(Exception):
     """Seed cannot finish; the message says why and what to do."""
 
 
-def _print(message: str) -> None:
-    # Flushed, so progress interleaves correctly with MLflow's own messages on stderr.
-    print(message, flush=True)
-
-
-def seed(log: Callable[[str], None] = _print) -> ModelVersionRef:
+def seed() -> ModelVersionRef:
     """Run the whole seed and return the Model Version it left as the Active Model."""
     settings = get_settings()
     configs = _load_configs(SEED_CONFIGS)
-    jobs = _check_stack()
+    _check_services(settings)
+    jobs = _connect_jobs(settings)
 
     queued = [service.submit(jobs, config) for config in configs]
     for job in queued:
-        log(f"queued job {job.id} ({job.name})")
-    finished = [_wait(jobs, job, log) for job in queued]
+        _log(f"queued job {job.id} ({job.name})")
+    finished = [_wait(jobs, job) for job in queued]
     if failed := [job for job in finished if job.status != "completed"]:
         details = "\n".join(f"  {job.name} (job {job.id}): {job.error}" for job in failed)
         raise SeedError(f"{len(failed)} seed job(s) failed; nothing was registered:\n{details}")
 
     registry = MlflowRegistryClient(settings.mlflow_tracking_uri)
-    for job in finished:
-        ref = registry.register_run(job.mlflow_run_id, settings.registered_model)
-        log(f"registered Run {job.mlflow_run_id} ({job.name}) as Model Version {ref}")
-
-    ref = _best_run_version(registry, finished[0].mlflow_run_id, log)
-    _deploy_and_check(ref, log)
+    try:
+        for job in finished:
+            ref = registry.register_run(job.mlflow_run_id, settings.registered_model)
+            _log(f"registered Run {job.mlflow_run_id} ({job.name}) as Model Version {ref}")
+        ref = _best_run_version(settings, registry, finished[0].mlflow_run_id)
+    except RegistryError as exc:
+        raise SeedError(str(exc)) from exc
+    _deploy_and_check(settings, ref)
     return ref
+
+
+def _log(message: str) -> None:
+    # Flushed, so progress interleaves correctly with MLflow's own messages on stderr.
+    print(message, flush=True)
 
 
 def _load_configs(directory: Path) -> list[ExperimentConfig]:
@@ -70,95 +74,90 @@ def _load_configs(directory: Path) -> list[ExperimentConfig]:
         raise SeedError(f"no seed configs in {directory}")
     configs = []
     for path in paths:
-        raw = yaml.safe_load(path.read_text())
+        try:
+            raw = yaml.safe_load(path.read_text())
+        except (OSError, yaml.YAMLError) as exc:
+            raise SeedError(f"cannot read {path}: {exc}") from exc
         if not isinstance(raw, dict):
             raise SeedError(f"{path}: expected a YAML mapping")
         try:
             configs.append(parse_config(raw))
         except ConfigError as exc:
-            raise SeedError(f"{path}: {exc}") from None
+            raise SeedError(f"{path}: {exc}") from exc
     return configs
 
 
-def _check_stack() -> JobRepository:
-    """Fail fast, before submitting anything, if any service seed needs is unreachable."""
-    settings = get_settings()
-    hint = "is the stack running? Start it with `make up`"
-    try:
-        jobs = JobRepository(get_engine())
-    except SQLAlchemyError as exc:
-        where = make_url(settings.app_db_url).render_as_string(hide_password=True)
-        raise SeedError(f"cannot reach Postgres at {where}: {hint}") from exc
-    for service_name, url in (
-        ("MLflow", f"{settings.mlflow_tracking_uri.rstrip('/')}/health"),
-        ("the API", f"{settings.api_url.rstrip('/')}/health"),
-    ):
+def _check_services(settings: Settings) -> None:
+    """Fail before submitting anything if MLflow or the API is unreachable."""
+    for name, base in (("MLflow", settings.mlflow_tracking_uri), ("the API", settings.api_url)):
+        url = f"{base.rstrip('/')}/health"
         try:
             httpx.get(url, timeout=5).raise_for_status()
         except httpx.HTTPError as exc:
-            raise SeedError(f"cannot reach {service_name} at {url}: {hint}") from exc
-    return jobs
+            raise SeedError(f"cannot reach {name} at {url}: {_NOT_RUNNING_HINT}") from exc
 
 
-def _wait(jobs: JobRepository, job: Job, log: Callable[[str], None]) -> Job:
+def _connect_jobs(settings: Settings) -> JobRepository:
+    try:
+        return JobRepository(get_engine())
+    except SQLAlchemyError as exc:
+        where = make_url(settings.app_db_url).render_as_string(hide_password=True)
+        raise SeedError(f"cannot reach Postgres at {where}: {_NOT_RUNNING_HINT}") from exc
+
+
+def _wait(jobs: JobRepository, job: Job) -> Job:
     try:
         done = service.wait(jobs, job.id, timeout_seconds=JOB_TIMEOUT_SECONDS)
     except TimeoutError as exc:
         raise SeedError(
             f"{exc}; is the worker running? Check `docker compose ps` and `make logs`"
         ) from exc
-    log(f"job {done.id} ({done.name}): {done.status}")
+    _log(f"job {done.id} ({done.name}): {done.status}")
     return done
 
 
 def _best_run_version(
-    registry: MlflowRegistryClient, seeded_run_id: str, log: Callable[[str], None]
+    settings: Settings, registry: MlflowRegistryClient, seeded_run_id: str
 ) -> ModelVersionRef:
-    """A Model Version of the Best Run, registering the Run first if it has none.
+    """The Model Version of the Best Run, registering the Run first if it has none.
 
     The Best Run is taken over every completed Run on the Dataset the seed jobs trained on,
     so it can be an earlier Run, from an earlier seed or from the data scientist.
     """
-    settings = get_settings()
     client = MlflowClient(settings.mlflow_tracking_uri)
     dataset_sha256 = client.get_run(seeded_run_id).data.tags["dataset_sha256"]
     rows = leaderboard(client, dataset_sha256)
     if not rows:
         raise SeedError("no completed Run on the Leaderboard after seeding")
     best = rows[0]
-    log(f"Best Run: {best.run_id} ({best.config_name}), mean CV RMSE {best.cv_rmse_mean:.4f}")
-    versions = registry.versions_of_run(best.run_id, settings.registered_model)
-    if versions:
-        return versions[-1]
+    _log(f"Best Run: {best.run_id} ({best.config_name}), mean CV RMSE {best.cv_rmse_mean:.4f}")
+    if ref := registry.version_of_run(best.run_id, settings.registered_model):
+        return ref
     ref = registry.register_run(best.run_id, settings.registered_model)
-    log(f"registered the Best Run as Model Version {ref}")
+    _log(f"registered the Best Run as Model Version {ref}")
     return ref
 
 
-def _deploy_and_check(ref: ModelVersionRef, log: Callable[[str], None]) -> None:
-    api = get_settings().api_url.rstrip("/")
-    body = {"model_name": ref.model_name, "version": ref.model_version}
-    try:
-        response = httpx.post(f"{api}/deploy", json=body, timeout=HTTP_TIMEOUT_SECONDS)
-    except httpx.HTTPError as exc:
-        raise SeedError(f"cannot reach the API at {api}/deploy: {exc}") from exc
-    if response.is_error:
-        raise SeedError(f"deploying {ref} failed ({response.status_code}): {_detail(response)}")
-    log(f"deployed Model Version {ref}; it is the Active Model")
+def _deploy_and_check(settings: Settings, ref: ModelVersionRef) -> None:
+    _post(settings, "/deploy", {"model_name": ref.model_name, "version": ref.model_version})
+    _log(f"deployed Model Version {ref}; it is the Active Model")
 
-    try:
-        response = httpx.post(
-            f"{api}/v1/predict", json={"rows": [SAMPLE_ROWS[0]]}, timeout=HTTP_TIMEOUT_SECONDS
-        )
-    except httpx.HTTPError as exc:
-        raise SeedError(f"cannot reach the API at {api}/v1/predict: {exc}") from exc
-    if response.is_error:
-        raise SeedError(f"test prediction failed ({response.status_code}): {_detail(response)}")
-    answer = response.json()
+    answer = _post(settings, "/v1/predict", {"rows": [SAMPLE_ROWS[0]]})
     answered_by = ModelVersionRef(answer["model_name"], answer["model_version"])
     if answered_by != ref:
         raise SeedError(f"/v1/predict answered with {answered_by}, expected {ref}")
-    log(f"/v1/predict answered {answer['predictions'][0]:.3f} {answer['unit']} with {ref}")
+    _log(f"/v1/predict answered {answer['predictions'][0]:.3f} {answer['unit']} with {ref}")
+
+
+def _post(settings: Settings, path: str, body: dict[str, Any]) -> dict[str, Any]:
+    url = f"{settings.api_url.rstrip('/')}{path}"
+    try:
+        response = httpx.post(url, json=body, timeout=HTTP_TIMEOUT_SECONDS)
+    except httpx.HTTPError as exc:
+        raise SeedError(f"cannot reach the API at {url}: {exc}") from exc
+    if response.is_error:
+        raise SeedError(f"POST {path} failed ({response.status_code}): {_detail(response)}")
+    return response.json()
 
 
 def _detail(response: httpx.Response) -> str:
