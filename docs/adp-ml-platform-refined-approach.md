@@ -96,7 +96,7 @@ Every Training Job uses the same Dataset, the same Test Set and the same CV fold
 - **Metrics, all in original units:** RMSE (primary), MAE and R². CV metrics are logged as mean and std across folds. Test metrics are logged once, after refitting the winning Candidate on the full training portion.
 - **Best Run:** the completed Run with the lowest mean CV RMSE on the current dataset hash. Test RMSE is shown on the Leaderboard next to it but is never used to rank. The README states this rule explicitly: choosing a Run by its test RMSE reintroduces notebook issue 8.
 
-**Known data property:** the target is capped at 5.00001; 747 rows in the CSV sit at the cap, so errors on expensive districts are understated. The README lists this as a limitation, and we do not correct for it.
+**Known data property:** the target is capped at 5.00001; 747 rows in the CSV sit at or near the cap (724 at 5.00001, 23 at 5.0), so errors on expensive districts are understated. The README lists this as a limitation, and we do not correct for it.
 
 ## 6. Experiment Config and training flow
 
@@ -397,7 +397,7 @@ The defaults below were not explicitly decided. Change any of them before implem
 **Verified**
 
 - [x] `training_data.csv` has the 8 features plus `MedHouseVal`, 16,512 rows, no NaNs or duplicates, and equals the first 16,512 rows of scikit-learn's dataset in original order (section 5).
-- [x] Target cap is 5.00001, with 747 capped rows in the CSV.
+- [x] Target cap is 5.00001, with 747 rows in the CSV at or near the cap (724 at 5.00001, 23 at 5.0).
 
 **Verify during implementation**
 

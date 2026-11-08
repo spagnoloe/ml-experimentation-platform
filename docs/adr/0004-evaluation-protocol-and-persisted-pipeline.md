@@ -21,5 +21,5 @@ The CSV is the first 16,512 rows of scikit-learn's California Housing dataset in
 ## Consequences
 
 - Changing the split or folds in settings makes every earlier Run incomparable. They are logged on every Run (`split_seed`, `test_size`, `cv_folds`, `cv_seed`) together with `dataset_sha256`, so the Leaderboard can filter on them.
-- The target is capped at 5.00001 (747 rows), so errors on the most expensive districts are understated. We do not correct for it.
+- The target is capped at 5.00001: 747 rows sit at or near the cap (724 at 5.00001, 23 at 5.0), so errors on the most expensive districts are understated. We do not correct for it.
 - Every Run logs one child run per Candidate, even a fixed job with a single Candidate, so fixed jobs and random searches share one code path.
