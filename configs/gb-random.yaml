@@ -1,5 +1,5 @@
 # A random search over the default gradient boosting search space. Submit with
-# `make train CONFIG=configs/gb-random.yaml`. About 21 s end to end on a 10-core laptop.
+# `make train CONFIG=configs/gb-random.yaml`. About 20 s end to end on a 10-core laptop.
 name: gb-random
 algorithm: gradient_boosting
 features:
