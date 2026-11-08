@@ -70,6 +70,28 @@ services:
       mlflow:
         condition: service_healthy
 
+  # A single worker: the Active Model lives in this process, and its lock serializes deploys.
+  api:
+    <<: *app
+    command: ["uvicorn", "app.api.main:app", "--host=0.0.0.0", "--port=8000", "--workers=1"]
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    # Healthy once it serves HTTP, even when degraded with no model: /deploy must be reachable.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
 volumes:
   pgdata:
   mlflowartifacts:

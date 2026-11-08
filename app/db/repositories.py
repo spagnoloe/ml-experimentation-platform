@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy import Engine, func, insert, select, update
 
-from app.db.tables import training_jobs
+from app.db.tables import deployments, training_jobs
 
 
 @dataclass(frozen=True)
@@ -107,3 +107,43 @@ class JobRepository:
                 .where(training_jobs.c.id == job_id, training_jobs.c.status == "running")
                 .values(**values)
             )
+
+
+@dataclass(frozen=True)
+class Deployment:
+    id: int
+    environment: str
+    model_name: str
+    model_version: int
+    created_at: datetime
+
+
+class DeploymentRepository:
+    """Append-only: there is deliberately no update or delete."""
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def append(self, environment: str, model_name: str, model_version: int) -> Deployment:
+        with self._engine.begin() as conn:
+            row = conn.execute(
+                insert(deployments)
+                .values(environment=environment, model_name=model_name, model_version=model_version)
+                .returning(deployments)
+            ).one()
+        return Deployment(**row._mapping)
+
+    def latest(self, environment: str) -> Deployment | None:
+        history = self.history(environment, limit=1)
+        return history[0] if history else None
+
+    def history(self, environment: str, limit: int = 50) -> list[Deployment]:
+        """Newest first."""
+        query = (
+            select(deployments)
+            .where(deployments.c.environment == environment)
+            .order_by(deployments.c.id.desc())
+            .limit(limit)
+        )
+        with self._engine.connect() as conn:
+            return [Deployment(**row._mapping) for row in conn.execute(query)]

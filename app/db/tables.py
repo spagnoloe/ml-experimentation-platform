@@ -3,9 +3,11 @@
 import uuid
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Column,
     DateTime,
+    Identity,
     Integer,
     MetaData,
     Table,
@@ -38,4 +40,16 @@ training_jobs = Table(
         name="training_jobs_status",
     ),
     CheckConstraint("phase IN ('cv', 'refit', 'logging')", name="training_jobs_phase"),
+)
+
+# Append-only: rows are never updated or deleted. The highest id per environment names the
+# Active Model (ADR-0001).
+deployments = Table(
+    "deployments",
+    metadata,
+    Column("id", BigInteger, Identity(always=True), primary_key=True),
+    Column("environment", Text, nullable=False),
+    Column("model_name", Text, nullable=False),
+    Column("model_version", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )

@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str = "http://localhost:5001"
     mlflow_experiment: str = "california-housing"
     api_url: str = "http://localhost:8000"
+    # The Deployments environment this API serves; only one exists in the proof of concept.
+    environment: str = "local"
 
     # Set in the image at build time; on the host it is read from git instead.
     git_sha: str | None = None
