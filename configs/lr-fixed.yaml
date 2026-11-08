@@ -1,0 +1,8 @@
+name: lr-fixed
+algorithm: linear_regression
+features:
+  bedrooms_per_room: true
+target_transform: none
+tuning:
+  mode: fixed
+  params: {}

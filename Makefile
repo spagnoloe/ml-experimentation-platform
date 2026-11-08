@@ -1,4 +1,7 @@
-.PHONY: install lint format test db up down logs image
+.PHONY: install lint format test db up down logs image train
+
+# Recorded on every Run by the worker image.
+export GIT_SHA := $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 
 install:
 	uv sync
@@ -20,7 +23,7 @@ test: db
 	uv run pytest
 
 up:
-	docker compose up -d --wait
+	docker compose up -d --build --wait
 
 down:
 	docker compose down
@@ -29,4 +32,9 @@ logs:
 	docker compose logs -f
 
 image:
-	docker build -t adp-experimentation-platform .
+	docker build --build-arg GIT_SHA=$(GIT_SHA) -t adp-experimentation-platform .
+
+# Submit an Experiment Config and wait for the worker to finish it. Needs `make up`.
+train:
+	@test -n "$(CONFIG)" || (echo "usage: make train CONFIG=configs/rf-fixed.yaml" && exit 2)
+	uv run python -m app.cli submit $(CONFIG) --wait

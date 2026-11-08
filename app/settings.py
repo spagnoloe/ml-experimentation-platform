@@ -15,8 +15,12 @@ class Settings(BaseSettings):
 
     app_db_url: str = "postgresql+psycopg://platform:platform@localhost:5432/app"
     test_db_url: str = "postgresql+psycopg://platform:platform@localhost:5432/app_test"
-    mlflow_tracking_uri: str = "http://localhost:5000"
+    mlflow_tracking_uri: str = "http://localhost:5001"
+    mlflow_experiment: str = "california-housing"
     api_url: str = "http://localhost:8000"
+
+    # Set in the image at build time; on the host it is read from git instead.
+    git_sha: str | None = None
 
     # Evaluation protocol: fixed for every Training Job so all Runs are comparable.
     split_seed: int = 42

@@ -1,3 +1,16 @@
+# Every app service runs the same image (see Dockerfile), so the worker that pickles a
+# pipeline and the services that load it share one scikit-learn version.
+x-app: &app
+  image: adp-experimentation-platform
+  build:
+    context: .
+    args:
+      GIT_SHA: ${GIT_SHA:-unknown}
+  environment:
+    APP_DB_URL: postgresql+psycopg://platform:platform@postgres:5432/app
+    MLFLOW_TRACKING_URI: http://mlflow:5000
+    API_URL: http://api:8000
+
 services:
   postgres:
     image: postgres:16
@@ -16,5 +29,47 @@ services:
       timeout: 3s
       retries: 30
 
+  # Tracking and registry. Runs live in the `mlflow` database; artifacts are proxied over
+  # HTTP (--serve-artifacts) so no client ever reads the artifacts volume directly.
+  mlflow:
+    <<: *app
+    command:
+      - mlflow
+      - server
+      - --backend-store-uri=postgresql+psycopg://platform:platform@postgres:5432/mlflow
+      - --artifacts-destination=/mlartifacts
+      - --serve-artifacts
+      - --host=0.0.0.0
+      - --port=5000
+      - --workers=2
+      - --allowed-hosts=mlflow:5000,localhost:${MLFLOW_HOST_PORT:-5001},127.0.0.1:${MLFLOW_HOST_PORT:-5001}
+    # Host port 5001: macOS's AirPlay Receiver usually holds 5000.
+    ports:
+      - "${MLFLOW_HOST_PORT:-5001}:5000"
+    volumes:
+      - mlflowartifacts:/mlartifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"
+      interval: 3s
+      timeout: 5s
+      retries: 40
+
+  worker:
+    <<: *app
+    command: ["python", "-m", "app.jobs.worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+
 volumes:
   pgdata:
+  mlflowartifacts:
