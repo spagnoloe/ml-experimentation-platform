@@ -232,6 +232,8 @@ Consumer routes are versioned under `/v1`, so the request contract can evolve in
 
 Three pages cover the whole workflow. The UI holds no training code and no SQL, only calls to services and HTTP clients.
 
+The MLflow UI cannot replace these pages. Open-source MLflow's UI has no action to launch a Training Job or deploy a Model Version. Serving with MLflow (`mlflow models serve`, `mlflow deployments`) is driven from the CLI or the SDK, serves one model fixed at startup, and has neither our validation gate nor Deployment history. The MLflow UI's AI Gateway endpoints forward requests to LLM providers, not to our Model Versions. The MLflow UI stays linked from each Run for deeper inspection (ADR-0005).
+
 | Page | What the data scientist does | Talks to |
 | --- | --- | --- |
 | Experiments | Fill in the Experiment Config form: algorithm, feature toggle, target transform, fixed or random, `n_iter`, prefilled params, and the Candidate count shown before launch · watch the jobs table with progress bars · browse the Leaderboard: CV RMSE mean ± std, test RMSE, MAE, R², algorithm, config name, key params, Best Run highlighted · open a Run's details · register a Run · open the Run in the MLflow UI | Jobs service (Postgres), MLflow client |
@@ -361,6 +363,7 @@ One closing line notes the equivalents on other clouds (for example GCP Cloud SQ
 2. `0002` MLflow for tracking and registry instead of custom tables.
 3. `0003` A worker polling a Postgres jobs table instead of a message broker.
 4. `0004` Evaluation protocol and persisted pipeline: fixed Test Set, shuffled k-fold CV for selection, the Test Set scored once per Run, the known geographic shift, and the full pipeline (feature steps and target transform) persisted against one shared schema.
+5. `0005` Our own Streamlit UI and serving API, not MLflow's UI and model serving: the open-source MLflow UI cannot launch Training Jobs or deploy Model Versions, and `mlflow models serve` has no validation gate, no Deployment history and no in-place switching.
 
 ## 15. Time plan (4 hours)
 

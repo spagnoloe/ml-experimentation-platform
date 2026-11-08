@@ -95,11 +95,12 @@ The screenshots follow one pass through it on a freshly seeded stack. A gradient
 - **Tracking and registry.** MLflow holds Runs, metrics, models and Model Versions; our Postgres holds only Training Jobs and Deployments ([ADR-0002](docs/adr/0002-mlflow-for-tracking-and-registry.md)).
 - **Deploying.** A **Deployment** pins an exact Model Version in an append-only table written only by `POST /deploy`, after the model has loaded and passed validation. MLflow aliases are not used ([ADR-0001](docs/adr/0001-deployments-pin-versions-not-aliases.md)).
 - **Serving.** One API process holds the Active Model and swaps it atomically, so a response never mixes Model Versions. Consumer routes are versioned under `/v1`; admin routes (`/deploy`, `/deployments`) sit on a separate router so production can move them behind auth.
+- **Why not MLflow's UI and serving.** Open-source MLflow's UI cannot launch a Training Job or deploy a Model Version. Its model server (`mlflow models serve`) serves one model fixed at startup, with no validation gate and no Deployment history. So the Streamlit UI and the serving API do those jobs, and the MLflow UI is linked from each Run for deeper inspection ([ADR-0005](docs/adr/0005-own-ui-and-serving-api-not-mlflow-serving.md)).
 
 Further reading:
 
 - [`GLOSSARY.md`](GLOSSARY.md): the domain vocabulary used in the code, the UI and these docs
-- [`docs/adr/`](docs/adr/): the four architecture decision records linked above
+- [`docs/adr/`](docs/adr/): the five architecture decision records linked above
 - [`docs/architecture-production.md`](docs/architecture-production.md): how this becomes a production system on AWS, with component and rollout diagrams and a mapping from each local piece to its AWS counterpart
 
 ## Known limitations
