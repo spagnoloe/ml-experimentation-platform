@@ -223,9 +223,9 @@ Consumer routes are versioned under `/v1`, so the request contract can evolve in
 - **Request model** is built from the schema module: each row requires all 8 fields as floats, with `extra="forbid"`. Types only; range checks are left to the production doc. Bad input, an empty `rows` list or more than 1,000 rows gets FastAPI's standard 422.
 - **Predict** builds a DataFrame in schema column order and calls the pipeline once for the whole batch. It reads the current model reference once per request, so a swap in the middle of a request is safe, and every prediction in one response comes from the same Model Version.
 - **Admin endpoints** live in a separate router tagged `admin`, so production can put them behind auth or an internal network without touching consumer routes.
-- **`ModelManager`** exposes `current()`, `load_and_validate(name, version)`, `swap(loaded)` and `reconcile()`. A `LoadedModel` dataclass holds the pipeline, name, version, run id, algorithm and `loaded_at`.
-- **`DeploymentRepository`** exposes `latest(env)`, `append(deployment)` and `history(env, limit)`.
-- **`RegistryClient`** wraps MLflow (`load_model`, `get_version_metadata`), so tests use a fake and the registry backend can change without touching the API.
+- **`ModelManager`** exposes `current()`, `load_and_validate(ref)`, `swap(loaded)`, `reconcile()`, `deploy(ref)`, `status()` and `history(limit)`. A `LoadedModel` dataclass holds the pipeline, name, version, run id, algorithm and `loaded_at`.
+- **`DeploymentRepository`** exposes `latest(env)`, `append(env, model_version_ref)` and `history(env, limit)`.
+- **`RegistryClient`** wraps MLflow (`load_model(ref)`, `get_version_metadata(ref)`), so tests use a fake and the registry backend can change without touching the API.
 - **Logging:** one structured stdout line per request, with the Model Version, row count and latency.
 
 ## 11. Streamlit UI
