@@ -24,4 +24,4 @@ RUN uv sync --frozen --no-dev
 ARG GIT_SHA=unknown
 ENV GIT_SHA=$GIT_SHA
 
-CMD ["python", "-c", "import app.settings; print('experimentation-platform image')"]
+CMD ["python", "-c", "import app.settings; print('ml-experimentation-platform image')"]

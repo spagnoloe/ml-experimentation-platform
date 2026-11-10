@@ -32,7 +32,7 @@ logs:
 	docker compose logs -f
 
 image:
-	docker build --build-arg GIT_SHA=$(GIT_SHA) -t experimentation-platform .
+	docker build --build-arg GIT_SHA=$(GIT_SHA) -t ml-experimentation-platform .
 
 # Submit an Experiment Config and wait for the worker to finish it. Needs `make up`.
 train:

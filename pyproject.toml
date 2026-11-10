@@ -1,5 +1,5 @@
 [project]
-name = "experimentation-platform"
+name = "ml-experimentation-platform"
 version = "0.1.0"
 description = "Train, compare and serve California house value models."
 requires-python = ">=3.12,<3.13"

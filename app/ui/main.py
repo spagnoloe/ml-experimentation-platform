@@ -4,7 +4,7 @@ import streamlit as st
 
 from app.ui import deployments, experiments, registry
 
-st.set_page_config(page_title="Experimentation Platform", layout="wide")
+st.set_page_config(page_title="ML Experimentation Platform", layout="wide")
 
 navigation = st.navigation(
     [
