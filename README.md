@@ -34,7 +34,7 @@ Other commands: `make train CONFIG=configs/rf-random.yaml` submits an Experiment
 
 Each step maps to a requirement of the assignment. It assumes `make up && make seed` has run.
 
-The screenshots follow one pass through it on a freshly seeded stack. A gradient boosting random search becomes the new Best Run. It is registered as Model Version 5 and deployed, and then the Active Model is switched back to the seeded Model Version 2.
+The screenshots follow one pass through it on a freshly seeded stack. A gradient boosting random search becomes the new Best Run. It is registered as Model Version 5 and deployed, so it becomes the Active Model, the version that answers predictions. Finally, the seeded Model Version 2 is deployed again. This isn't because it is better: it shows that you can roll back to any earlier Model Version, and that a rollback is just another Deployment.
 
 1. **Launch.** On the **Experiments** page, under *Launch a Training Job*, pick an algorithm (linear regression, random forest, gradient boosting, or dummy, the mean predictor behind the **Baseline**), toggle the bedrooms-per-room feature, choose the target transform, and choose **Fixed** hyperparameters or **Random search**. The caption shows how many Candidates and fits the job will run. Click **Launch** and watch the *Training Jobs* table: status, phase and a progress bar refresh every 2 seconds.
    *Runtime of a default search* (10 Candidates × 5-fold CV, then one refit and the Test Set score), measured end to end on a 10-core laptop: **about 31 s for random forest** and **about 20 s for gradient boosting**. The same searches are in `configs/rf-random.yaml` and `configs/gb-random.yaml` for the CLI.
