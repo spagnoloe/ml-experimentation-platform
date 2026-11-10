@@ -1,4 +1,4 @@
-# ADP Experimentation Platform
+# ML Experimentation Platform
 
 A platform where a data scientist trains and compares models that predict California district house values, and chooses which model other teams and systems get predictions from.
 

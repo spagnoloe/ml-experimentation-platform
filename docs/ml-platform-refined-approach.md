@@ -247,7 +247,7 @@ Form polish is out of scope. Errors from the API (422, 503) are shown as-is with
 One Python package and one image run the four app services. Packages are split by responsibility, so the UI, worker and API import the same schema and services.
 
 ```text
-adp-experimentation-platform/
+ml-experimentation-platform/
 ├── app/
 │   ├── settings.py             # pydantic-settings: URLs, DB URLs, seeds, limits
 │   ├── ml/

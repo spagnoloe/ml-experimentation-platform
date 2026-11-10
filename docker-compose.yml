@@ -1,7 +1,7 @@
 # Every app service runs the same image (see Dockerfile), so the worker that serializes a
 # pipeline and the services that load it share one scikit-learn version.
 x-app: &app
-  image: adp-experimentation-platform
+  image: ml-experimentation-platform
   build:
     context: .
     args:

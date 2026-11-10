@@ -1,4 +1,4 @@
-# ADP Experimentation Platform
+# ML Experimentation Platform
 
 A local platform where a data scientist trains, tracks and compares regression models on the California Housing Dataset, picks the best one, and chooses which Model Version other teams get predictions from. It replaces an inherited notebook whose results could not be trusted (see [What was wrong with the notebook](#what-was-wrong-with-the-notebook)).
 
